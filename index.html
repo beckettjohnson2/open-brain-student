@@ -370,11 +370,15 @@
     <section class="panel" id="panel-youtube" hidden>
       <div class="card">
         <h2>Capture a YouTube video</h2>
-        <p class="hint">Paste the video link. You copy the transcript from YouTube and paste it here. Level 3 makes this automatic.</p>
+        <p class="hint">Paste the video link and tap Capture. Your server fetches what was said in the video and saves it.</p>
         <label for="ytUrl">YouTube link</label>
         <div class="row tight">
           <input class="grow" id="ytUrl" type="url" inputmode="url" placeholder="https://www.youtube.com/watch?v=…">
-          <button id="ytFind" type="button">Find video</button>
+          <button class="primary" id="ytAuto" type="button">Capture video</button>
+        </div>
+        <p class="hint" id="ytResult" role="status" hidden></p>
+        <div class="row">
+          <button class="quiet" id="ytFind" type="button">Paste the transcript by hand instead</button>
         </div>
 
         <div id="ytDetails" hidden>
@@ -437,14 +441,24 @@
     <section class="panel" id="panel-url" hidden>
       <div class="card">
         <h2>Capture an article</h2>
-        <p class="hint">Browsers do not let one website read another, so this page cannot fetch the article for you. Open the article, select its text, copy it, and paste it below. Level 3 makes this automatic.</p>
+        <p class="hint">Paste the article link and tap Capture. Your server fetches the page, pulls out the readable text, and saves it.</p>
         <label for="urlLink">Article link</label>
-        <input id="urlLink" type="url" inputmode="url" placeholder="https://…">
-        <label for="urlText">Article text</label>
-        <textarea id="urlText" placeholder="Paste the article text here"></textarea>
-        <div class="count" id="urlCount">0 characters</div>
+        <div class="row tight">
+          <input class="grow" id="urlLink" type="url" inputmode="url" placeholder="https://…">
+          <button class="primary" id="urlAuto" type="button">Capture article</button>
+        </div>
+        <p class="hint" id="urlResult" role="status" hidden></p>
         <div class="row">
-          <button class="primary grow" id="urlSave" type="button">Save article</button>
+          <button class="quiet" id="urlManualToggle" type="button">Paste the text by hand instead</button>
+        </div>
+        <div id="urlManual" hidden>
+          <p class="hint">Use this when a page needs a login or will not load for the server. Open the article, select its text, copy it, and paste it below.</p>
+          <label for="urlText">Article text</label>
+          <textarea id="urlText" placeholder="Paste the article text here"></textarea>
+          <div class="count" id="urlCount">0 characters</div>
+          <div class="row">
+            <button class="primary grow" id="urlSave" type="button">Save article</button>
+          </div>
         </div>
       </div>
     </section>
@@ -554,10 +568,10 @@
   }
 
   // Runs a save, disabling the button while it works so it cannot be double-tapped.
-  async function withBusy(button, work) {
+  async function withBusy(button, work, busyLabel) {
     var label = button.textContent;
     button.disabled = true;
-    button.textContent = 'Saving…';
+    button.textContent = busyLabel || 'Saving…';
     try {
       await work();
     } catch (err) {
@@ -721,6 +735,39 @@
     } catch (err) {
       console.warn('thought_sources insert failed:', err);
     }
+  }
+
+  // Calls one of your Edge Functions (code running on Supabase's servers).
+  // Your login token is sent along automatically, which is how the function
+  // knows whose brain to save into.
+  async function callFunction(name, body) {
+    if (!user) throw new Error('Sign in first.');
+    var result = await db.functions.invoke(name, { body: body });
+    if (result.error) {
+      var message = errorText(result.error);
+      // When the function answers with an error, its own explanation is in the response.
+      try {
+        var response = result.error.context;
+        if (response && typeof response.json === 'function') {
+          var info = await response.json();
+          if (info && info.error) message = info.error;
+          else if (response.status === 404) message = 'The ' + name + ' function is not deployed yet.';
+        }
+      } catch (e) { /* keep the general message */ }
+      throw new Error(message);
+    }
+    if (!result.data || !result.data.ok) {
+      throw new Error((result.data && result.data.error) || 'The server did not confirm the save.');
+    }
+    recentStale = true;
+    return result.data;
+  }
+
+  // The line under a Capture button that says what just happened.
+  function showResult(id, text) {
+    var el = $(id);
+    el.textContent = text || '';
+    el.hidden = !text;
   }
 
   /* =====================================================================
@@ -891,6 +938,32 @@
     }
   }
 
+  function captureYouTube() {
+    var link = $('ytUrl').value.trim();
+    if (!youTubeId(link)) {
+      toast('That does not look like a YouTube link. Copy it from the address bar of the video.', 'bad');
+      return;
+    }
+    showResult('ytResult', '');
+    withBusy($('ytAuto'), async function () {
+      var saved = await callFunction('capture-youtube', { url: link });
+      var size = Number(saved.chars || 0).toLocaleString();
+      $('ytUrl').value = '';
+      $('ytTitle').value = '';
+      $('ytText').value = '';
+      $('ytDetails').hidden = true;
+      ytVideoId = '';
+      updateYtCount();
+      if (saved.has_transcript) {
+        showResult('ytResult', 'Saved “' + saved.title + '” (' + size + ' characters of transcript).');
+        toast('Video saved.', 'good');
+      } else {
+        showResult('ytResult', 'Saved “' + saved.title + '”, but no transcript could be fetched, so this is only the video description. For the full text, paste the transcript by hand below.');
+        toast('Saved the description only. No transcript was available.', 'bad');
+      }
+    }, 'Capturing…');
+  }
+
   function cleanTimestamps() {
     var box = $('ytText');
     var lines = box.value.split(/\r?\n/);
@@ -1019,6 +1092,21 @@
     }
   }
 
+  function captureUrl() {
+    var link = normalUrl($('urlLink').value);
+    if (!link) { toast('Paste the article link first.', 'bad'); return; }
+    showResult('urlResult', '');
+    withBusy($('urlAuto'), async function () {
+      var saved = await callFunction('capture-url', { url: link });
+      var size = Number(saved.chars || 0).toLocaleString();
+      $('urlLink').value = '';
+      $('urlText').value = '';
+      updateUrlCount();
+      showResult('urlResult', 'Saved “' + (saved.title || saved.url) + '” (' + size + ' characters).');
+      toast('Article saved.', 'good');
+    }, 'Capturing…');
+  }
+
   function saveUrl() {
     var link = normalUrl($('urlLink').value);
     if (!link) { toast('Paste the article link first.', 'bad'); return; }
@@ -1031,6 +1119,7 @@
       $('urlLink').value = '';
       $('urlText').value = '';
       updateUrlCount();
+      showResult('urlResult', '');
       toast('Article saved.', 'good');
     });
   }
@@ -1170,8 +1259,9 @@
   $('voiceSave').addEventListener('click', saveVoice);
   $('voiceClear').addEventListener('click', function () { stopVoice(); $('voiceText').value = ''; });
 
+  $('ytAuto').addEventListener('click', captureYouTube);
   $('ytFind').addEventListener('click', findVideo);
-  $('ytUrl').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); findVideo(); } });
+  $('ytUrl').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); captureYouTube(); } });
   $('ytClean').addEventListener('click', cleanTimestamps);
   $('ytSave').addEventListener('click', saveYouTube);
 
@@ -1193,6 +1283,9 @@
   $('pdfSave').addEventListener('click', savePdf);
   $('pdfClear').addEventListener('click', clearPdf);
 
+  $('urlAuto').addEventListener('click', captureUrl);
+  $('urlLink').addEventListener('keydown', function (e) { if (e.key === 'Enter') { e.preventDefault(); captureUrl(); } });
+  $('urlManualToggle').addEventListener('click', function () { $('urlManual').hidden = !$('urlManual').hidden; });
   $('urlSave').addEventListener('click', saveUrl);
 
   $('searchForm').addEventListener('submit', runSearch);
