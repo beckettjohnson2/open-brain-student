@@ -1200,20 +1200,26 @@
     var term = $('searchBox').value.trim();
     if (!term) { toast('Type a word or phrase to search for.', 'bad'); return; }
 
-    // % and _ are wildcards in the database, so treat them as plain characters.
-    var safe = term.replace(/[\\%_]/g, function (c) { return '\\' + c; });
+    // search-brain searches by meaning AND by keyword, best matches first.
     $('searchInfo').textContent = 'Searching…';
     try {
-      var result = await db.from('thoughts')
-        .select('id, content, created_at')
-        .ilike('content', '%' + safe + '%')
-        .order('created_at', { ascending: false })
-        .limit(50);
-      if (result.error) throw result.error;
-      var n = result.data.length;
+      var rows = (await callFunction('search-brain', { query: term })).results || [];
+      var n = rows.length;
       $('searchInfo').textContent = n === 0 ? '' :
-        (n === 50 ? 'Showing the 50 newest matches' : n + (n === 1 ? ' match' : ' matches')) + ' for "' + term + '"';
-      fillList($('searchResults'), result.data, 'Nothing found for "' + term + '". Try a shorter or different word.');
+        n + (n === 1 ? ' match' : ' matches') + ' for "' + term + '", best first';
+      fillList($('searchResults'), rows, 'Nothing found for "' + term + '". Try different words.');
+      // Under each result: up to 3 thoughts the graph links it to.
+      var cards = $('searchResults').querySelectorAll('.thought');
+      rows.forEach(function (row, i) {
+        if (!cards[i] || !row.related || row.related.length === 0) return;
+        var rel = document.createElement('div');
+        rel.className = 'count';
+        rel.textContent = 'Related: ' + row.related.map(function (r) {
+          var t = (r.summary || r.content_preview || '').replace(/\s+/g, ' ').trim();
+          return t.length > 90 ? t.slice(0, 90) + '…' : t;
+        }).join('  ·  ');
+        cards[i].appendChild(rel);
+      });
     } catch (err) {
       console.error(err);
       $('searchInfo').textContent = '';

@@ -10,8 +10,9 @@
 //   The AI never touches your database directly. Only this code does.
 // =====================================================================
  
+import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
- 
+
 // ---------------------------------------------------------------------
 // 1. SETUP — read settings that Supabase provides to the function
 // ---------------------------------------------------------------------
@@ -21,7 +22,14 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const MCP_ACCESS_KEY = Deno.env.get("MCP_ACCESS_KEY");
- 
+// Whose brain this is (the same secret the Telegram bot uses). Search only
+// looks at this person's thoughts, and new thoughts are saved to them.
+const OWNER_USER_ID = Deno.env.get("OWNER_USER_ID") ?? "";
+
+// Levels 6 + 7: Supabase's free built-in model that turns text into meaning.
+const embedder = new Supabase.ai.Session("gte-small");
+const MIN_SIMILARITY = 0.78;
+
 // The database connection. It uses the service_role key, which can read
 // and write everything — that is why the password check below matters.
 const supabase = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY, {
@@ -65,19 +73,39 @@ const TOOLS = [
     description:
       "Search the user's Open Brain — their personal collection of notes, " +
       "YouTube transcripts, articles, PDFs, voice notes, and Telegram " +
-      "messages — for thoughts containing the given words. This is a plain " +
-      "text match, not semantic search, so use one to three short keywords " +
-      "(every word must appear). If nothing comes back, try simpler or " +
-      "different words. Returns up to 10 matches, newest first.",
+      "messages. Searches by MEANING and by keyword together, so a plain " +
+      "description works even if the user never used those exact words " +
+      "(e.g. 'how atoms get bigger'). Also finds details buried deep inside " +
+      "long transcripts and PDFs. Returns up to 10 matches, best first, " +
+      "each with its id (use it with related_thoughts).",
     inputSchema: {
       type: "object",
       properties: {
         query: {
           type: "string",
-          description: "One to three keywords to look for, e.g. 'calculus' or 'study habits'",
+          description: "What to look for, in plain words, e.g. 'calculus' or 'ways I study best'",
         },
       },
       required: ["query"],
+    },
+  },
+  {
+    name: "related_thoughts",
+    description:
+      "Given a thought's id (from search_thoughts or list_recent), list the " +
+      "thoughts the brain has linked to it because they mean similar things.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        thought_id: { type: "string", description: "The id of the thought" },
+        limit: {
+          type: "integer",
+          description: "How many related thoughts to return (1–10). Defaults to 5.",
+          minimum: 1,
+          maximum: 10,
+        },
+      },
+      required: ["thought_id"],
     },
   },
   {
@@ -132,12 +160,30 @@ function formatThoughts(rows: Thought[], emptyMessage: string): string {
     .join("\n\n---\n\n");
 }
  
-// search_thoughts: find thoughts whose content contains every word.
-// "ilike" is a database search that ignores upper/lower case.
+// search_thoughts: hybrid search (meaning + keywords), best first.
+// If meaning search ever fails, it falls back to the old keyword search.
 async function searchThoughts(args: Record<string, unknown>): Promise<string> {
   const query = String(args.query ?? "").trim();
   if (!query) throw new Error("Please provide a search query.");
- 
+
+  if (OWNER_USER_ID) {
+    try {
+      const vector = await embedder.run(query, { mean_pool: true, normalize: true });
+      const { data, error } = await supabase.rpc("hybrid_search", {
+        query_embedding: JSON.stringify(Array.from(vector as number[])),
+        query_text: query,
+        match_count: 10,
+        p_user_id: OWNER_USER_ID,
+        min_similarity: MIN_SIMILARITY,
+      });
+      if (error) throw error;
+      return formatThoughts(data as Thought[], `No thoughts found about: ${query}`);
+    } catch (e) {
+      console.error("hybrid search failed, using keyword search:", e);
+    }
+  }
+
+  // Old keyword search: "ilike" ignores upper/lower case.
   const words = query.split(/\s+/).filter(Boolean).slice(0, 5);
   let request = supabase.from("thoughts").select("id, content, created_at");
   for (const word of words) {
@@ -174,17 +220,41 @@ async function addThought(args: Record<string, unknown>): Promise<string> {
  
   const { data, error } = await supabase
     .from("thoughts")
-    .insert({ content })
+    .insert(OWNER_USER_ID ? { content, user_id: OWNER_USER_ID } : { content })
     .select("id, content, created_at")
     .single();
- 
+
   if (error) throw new Error(`Database error: ${error.message}`);
   return `Saved.\n\n${formatThoughts([data as Thought], "")}`;
 }
- 
+
+// related_thoughts: read the graph — thoughts linked by similar meaning.
+async function relatedThoughts(args: Record<string, unknown>): Promise<string> {
+  const id = String(args.thought_id ?? "").trim();
+  if (!id) throw new Error("Please provide a thought_id.");
+  let limit = Number(args.limit ?? 5);
+  if (!Number.isFinite(limit)) limit = 5;
+  limit = Math.min(10, Math.max(1, Math.floor(limit)));
+
+  const { data, error } = await supabase.rpc("related_thoughts", {
+    p_thought_id: id,
+    match_count: limit,
+    p_user_id: OWNER_USER_ID || null,
+  });
+  if (error) throw new Error(`Database error: ${error.message}`);
+  if (!data || data.length === 0) return `No linked thoughts for ${id} yet.`;
+  return (data as { id: string; content_preview: string; summary: string | null; created_at: string; similarity: number }[])
+    .map((t) =>
+      `[${t.created_at}] (id: ${t.id}, similarity ${t.similarity.toFixed(3)})\n` +
+      (t.summary ? `Summary: ${t.summary}\n` : "") + t.content_preview
+    )
+    .join("\n\n---\n\n");
+}
+
 // Look up which function to run for each tool name.
 const TOOL_HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<string>> = {
   search_thoughts: searchThoughts,
+  related_thoughts: relatedThoughts,
   list_recent: listRecent,
   add_thought: addThought,
 };

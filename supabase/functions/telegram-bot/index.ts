@@ -2,6 +2,7 @@
 // Telegram calls this function every time someone messages your bot.
 // It saves the message to your thoughts table, or searches it.
 
+import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { createClient } from 'npm:@supabase/supabase-js@2'
 
 // Secrets. The first three are ones you added; the SUPABASE_ ones are
@@ -23,6 +24,39 @@ const corsHeaders = {
 const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 })
+
+// Levels 6 + 7: Supabase's free built-in model that turns text into meaning.
+const embedder = new Supabase.ai.Session('gte-small')
+
+// Meaning + keyword search over the owner's thoughts, best first.
+// Falls back to the old keyword search if anything goes wrong.
+async function searchBrain(query: string) {
+  try {
+    const vector = await embedder.run(query, { mean_pool: true, normalize: true })
+    const { data, error } = await db.rpc('hybrid_search', {
+      query_embedding: JSON.stringify(Array.from(vector as number[])),
+      query_text: query,
+      match_count: 5,
+      p_user_id: OWNER_USER_ID,
+      min_similarity: 0.78,
+    })
+    if (error) throw error
+    return data as { content: string; created_at: string }[]
+  } catch (err) {
+    console.error('hybrid search failed, using keyword search:', err)
+    // Treat % and _ as plain characters, not wildcards
+    const safe = query.replace(/[\\%_]/g, '\\$&')
+    const { data, error } = await db
+      .from('thoughts')
+      .select('content, created_at')
+      .eq('user_id', OWNER_USER_ID)
+      .ilike('content', `%${safe}%`)
+      .order('created_at', { ascending: false })
+      .limit(5)
+    if (error) throw error
+    return data
+  }
+}
 
 // Always answer Telegram with 200, or it will keep re-sending the message.
 function ok(): Response {
@@ -141,16 +175,7 @@ Deno.serve(async (req) => {
         await reply(chatId, 'Tell me what to look for, like: /search coffee')
         return ok()
       }
-      // Treat % and _ as plain characters, not wildcards
-      const safe = query.replace(/[\\%_]/g, '\\$&')
-      const { data, error } = await db
-        .from('thoughts')
-        .select('content, created_at')
-        .eq('user_id', OWNER_USER_ID)
-        .ilike('content', `%${safe}%`)
-        .order('created_at', { ascending: false })
-        .limit(5)
-      if (error) throw error
+      const data = await searchBrain(query)
       await reply(
         chatId,
         data && data.length
