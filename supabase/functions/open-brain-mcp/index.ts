@@ -22,6 +22,7 @@ import { createClient } from "jsr:@supabase/supabase-js@2";
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const MCP_ACCESS_KEY = Deno.env.get("MCP_ACCESS_KEY");
+const CHATGPT_ACCESS_KEY = (Deno.env.get("CHATGPT_ACCESS_KEY") ?? "").trim();
 // Whose brain this is (the same secret the Telegram bot uses). Search only
 // looks at this person's thoughts, and new thoughts are saved to them.
 const OWNER_USER_ID = Deno.env.get("OWNER_USER_ID") ?? "";
@@ -340,7 +341,11 @@ Deno.serve(async (req: Request) => {
     return json({ error: "Server is missing the MCP_ACCESS_KEY secret." }, 500);
   }
   const auth = (req.headers.get("authorization") ?? "").trim();
-  if (auth !== `Bearer ${MCP_ACCESS_KEY.trim()}`) {
+  const headerOk = auth === `Bearer ${MCP_ACCESS_KEY.trim()}`;
+  // ChatGPT can't send headers, so it passes its own password as ?key=
+  const urlKey = new URL(req.url).searchParams.get("key");
+  const keyOk = CHATGPT_ACCESS_KEY !== "" && urlKey === CHATGPT_ACCESS_KEY;
+  if (!headerOk && !keyOk) {
     return json({ error: "Unauthorized" }, 401);
   }
  
