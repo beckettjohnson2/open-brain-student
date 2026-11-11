@@ -167,6 +167,7 @@ const HELP =
   '/takeaway words: add your takeaway to a Library item\n' +
   '/recap Class: summary, to save a class recap (I ask one follow-up question)\n' +
   '/goals to see the goals you track\n' +
+  '/mygoals to review them one at a time (Keep / Pause / Drop)\n' +
   '/recent to see your last 5 thoughts\n\n' +
   'Send a bare link and I read it (video transcript, article or PDF).'
 
@@ -485,6 +486,28 @@ async function sendNextGoal(chatId: number | string): Promise<boolean> {
     { text: 'Not a goal', callback_data: `gn:${next.id}` },
   ]])
   await db.from('goal_candidates').update({ sent_at: new Date().toISOString() }).eq('id', next.id)
+  return true
+}
+
+// /mygoals: review tracked (active) goals one at a time with Keep / Pause / Drop.
+// Pause and Drop only change goals.status; nothing is ever deleted.
+// `after` = the goal just answered, so the review walks forward in tracking order.
+async function sendNextTrackedGoal(chatId: number | string, after?: { confirmed_at: string }): Promise<boolean> {
+  let q = db.from('goals').select('id, text, source_thought_id, confirmed_at')
+    .eq('user_id', OWNER_USER_ID).eq('status', 'active').order('confirmed_at').order('id')
+  if (after) q = q.gt('confirmed_at', after.confirmed_at)
+  const { data, error } = await q
+  if (error) throw error
+  const next = data?.[0]
+  if (!next) return false
+  const left = data.length - 1
+  const from = next.source_thought_id ? `\nFrom /t_${next.source_thought_id.slice(0, 8)}` : ''
+  await reply(chatId,
+    `\u{1F3AF} "${next.text}"${from}\n\n${left ? `${left} more after this.` : 'Last one.'}`, [[
+      { text: '✅ Keep', callback_data: `mg:k:${next.id}` },
+      { text: '⏸ Pause', callback_data: `mg:p:${next.id}` },
+      { text: '\u{1F5D1} Drop', callback_data: `mg:d:${next.id}` },
+    ]])
   return true
 }
 
@@ -847,6 +870,36 @@ async function handleCallback(cb: any): Promise<void> {
     return
   }
 
+  // /mygoals review: Keep leaves it active; Pause / Drop only change status. Then the next.
+  const mg = data.match(/^mg:([kpd]):([0-9a-f-]{36})$/)
+  if (mg) {
+    const { data: g } = await db.from('goals').select('id, text, status, confirmed_at')
+      .eq('id', mg[2]).eq('user_id', OWNER_USER_ID).maybeSingle()
+    if (!g) {
+      await telegram('answerCallbackQuery', { callback_query_id: cb.id, text: 'Goal not found.' })
+      return
+    }
+    const status = mg[1] === 'k' ? 'active' : mg[1] === 'p' ? 'paused' : 'dropped'
+    if (g.status !== status) {
+      const { error } = await db.from('goals').update({ status }).eq('id', g.id).eq('user_id', OWNER_USER_ID)
+      if (error) {
+        await telegram('answerCallbackQuery', { callback_query_id: cb.id, text: `Could not save: ${error.message}` })
+        return
+      }
+    }
+    const label = status === 'active' ? '✅ Kept' : status === 'paused' ? '⏸ Paused' : '\u{1F5D1} Dropped (not deleted)'
+    await telegram('answerCallbackQuery', { callback_query_id: cb.id, text: label })
+    await telegram('editMessageText', { chat_id: chatId, message_id: messageId, text: `${label}: "${g.text}"` })
+    const more = await sendNextTrackedGoal(chatId, g)
+    if (!more) {
+      const { data: all } = await db.from('goals').select('status').eq('user_id', OWNER_USER_ID)
+      const n = (s: string) => (all ?? []).filter((x) => x.status === s).length
+      await reply(chatId, `Done. Active: ${n('active')}, paused: ${n('paused')}, dropped: ${n('dropped')}. ` +
+        'Nothing was deleted. /goals lists the active ones.')
+    }
+    return
+  }
+
   // "Open the item" under a saved takeaway
   const open = data.match(/^op:([0-9a-f-]{36})$/)
   if (open) {
@@ -1077,6 +1130,13 @@ Deno.serve(async (req) => {
         ? '\u{1F3AF} Goals you are tracking:\n\n' + data.map((g, i) =>
           `${i + 1}. ${g.text}${g.source_thought_id ? `  /t_${g.source_thought_id.slice(0, 8)}` : ''}`).join('\n')
         : pending ? 'No goals tracked yet. Answer the question above.' : 'No goals tracked yet.')
+      return ok()
+    }
+
+    // /mygoals: review tracked goals one at a time (Keep / Pause / Drop)
+    if (command === 'mygoals') {
+      const sent = await sendNextTrackedGoal(chatId)
+      if (!sent) await reply(chatId, 'No active goals to review. /goals shows proposals waiting for an answer.')
       return ok()
     }
 
