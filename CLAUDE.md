@@ -54,9 +54,11 @@ built and what's next.
   `include_kinds text[]` (null = everything except `course_setup`).
   Embeddings: gte-small, 384 dims, via `Supabase.ai.Session` inside edge
   functions only. Thoughts over 300 words also get chunks in `thought_chunks`.
-- **Enrichment:** the `enrich-on-insert` database webhook → `enrich-thought`
-  (tags/category/summary/kind via call-llm, then free embedding/chunks/links).
-  Modes: `BACKFILL`, `CONTINUE`, `RELINK`, `CLASSIFY`.
+- **Enrichment:** the `enrich_on_insert_v2` trigger (`notify_enrich_thought()`,
+  pg_net) → `enrich-thought` (tags/category/summary/kind via call-llm, then
+  free embedding/chunks/links). Modes: `BACKFILL`, `CONTINUE`, `RELINK`,
+  `CLASSIFY`, `RETAG` (with `dryRun`). The old `enrich-on-insert` webhook is
+  disabled.
 - **Ask my brain:** `supabase/functions/_shared/ask.ts` (`askBrain`,
   `renderAnswer`), used by `telegram-bot` and the `ask_brain` MCP tool.
   Tables: `ask_turns` (memory, cost, citations; `/new` sets `cleared_at`),
@@ -69,9 +71,21 @@ built and what's next.
   `telegram-bot`, `open-brain-mcp`, `enrich-thought`, `weekly-digest`,
   `call-llm`. Deploy `search-brain`, `capture-url` and `capture-youtube`
   without that flag (they check logins).
-- **Known open issue:** `call-llm` and `enrich-thought` don't check who is
-  calling them, so anyone with the URL can make them spend AI credit. Fix as
-  its own feature.
+- **Internal secret:** `call-llm`, `enrich-thought` and `weekly-digest` call
+  `rejectUnlessInternal(req)` (`_shared/internal-auth.ts`) and return 401
+  without the `x-internal-secret` header. Any new internal call must send
+  `internalHeaders()`. The value lives in Vault (`internal_secret`, read by
+  SQL/pg_cron), the `INTERNAL_SECRET` edge secret, and `.env` (scripts). Never
+  write it into the repo or into SQL. The MCP server accepts it as well as its
+  own keys.
+- **Telegram:** requests must carry `X-Telegram-Bot-Api-Secret-Token` =
+  `TELEGRAM_WEBHOOK_SECRET`. POST to telegram-bot with `x-internal-secret` to
+  re-register the webhook (`allowed_updates`: message, callback_query).
+- **Owner:** Vault `owner_user_id`; `public.owner_user_id()`; the
+  `thoughts_default_owner` trigger fills in a missing `user_id`.
+- **Permissions on this machine:** the auto-mode check allows deploys and
+  `migrations/*.sql` runs. It blocks drops/deletes and reading the owner's
+  credentials, so hand those to the owner as copy-paste SQL.
 - **Never** re-run the root `migration.sql`: it re-creates the Level 1
   "anyone can read and write" policy.
 - No Docker or `pg_dump` on this machine; `npx supabase db query --remote --read-only`

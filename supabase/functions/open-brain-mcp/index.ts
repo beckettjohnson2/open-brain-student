@@ -13,6 +13,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { askBrain, renderAnswer } from "../_shared/ask.ts";
+import { INTERNAL_HEADER, internalSecret, safeEqual } from "../_shared/internal-auth.ts";
 
 // ---------------------------------------------------------------------
 // 1. SETUP — read settings that Supabase provides to the function
@@ -389,7 +390,11 @@ Deno.serve(async (req: Request) => {
   // ChatGPT can't send headers, so it passes its own password as ?key=
   const urlKey = new URL(req.url).searchParams.get("key");
   const keyOk = CHATGPT_ACCESS_KEY !== "" && urlKey === CHATGPT_ACCESS_KEY;
-  if (!headerOk && !keyOk) {
+  // Your own scripts (the retrieval test) use the internal secret instead.
+  const internal = internalSecret();
+  const givenInternal = (req.headers.get(INTERNAL_HEADER) ?? "").trim();
+  const internalOk = internal !== "" && givenInternal !== "" && safeEqual(givenInternal, internal);
+  if (!headerOk && !keyOk && !internalOk) {
     return json({ error: "Unauthorized" }, 401);
   }
  

@@ -11,8 +11,8 @@
 // Each run is added to tests/retrieval-history.csv so you can see whether a
 // change helped or hurt.
 //
-// Needs your MCP password (the MCP_ACCESS_KEY secret, the same one in your
-// Claude Desktop config). Either:
+// Uses INTERNAL_SECRET from .env (set up Nov 11), or your MCP password (the
+// MCP_ACCESS_KEY secret from your Claude Desktop config). For the password:
 //   - put a line  MCP_ACCESS_KEY=...  in a file named .env in the project
 //     folder (.env is git-ignored), or
 //   - PowerShell:  $env:MCP_ACCESS_KEY = "..."  before running.
@@ -31,13 +31,20 @@ const CASES_FILE = args.find((a) => !a.startsWith("--")) ?? "tests/retrieval-cas
 const HISTORY_FILE = "tests/retrieval-history.csv";
 const HISTORY_HEADER = "date,commit,cases,top3,top10,ask_cases,ask_pass";
 
-function accessKey() {
-  if (process.env.MCP_ACCESS_KEY) return process.env.MCP_ACCESS_KEY.trim();
-  if (existsSync(".env")) {
-    const line = readFileSync(".env", "utf8").split(/\r?\n/).find((l) => l.startsWith("MCP_ACCESS_KEY="));
-    if (line) return line.slice("MCP_ACCESS_KEY=".length).trim().replace(/^["']|["']$/g, "");
-  }
-  console.error("MCP_ACCESS_KEY not found. Put  MCP_ACCESS_KEY=...  in .env (see the top of this file).");
+// The MCP password, or else the INTERNAL_SECRET (already in .env) — the
+// MCP server accepts either. Returns the headers to send.
+function authHeaders() {
+  const fromEnvFile = (name) => {
+    if (process.env[name]) return process.env[name].trim();
+    if (!existsSync(".env")) return "";
+    const line = readFileSync(".env", "utf8").split(/\r?\n/).find((l) => l.startsWith(name + "="));
+    return line ? line.slice(name.length + 1).trim().replace(/^["']|["']$/g, "") : "";
+  };
+  const mcp = fromEnvFile("MCP_ACCESS_KEY");
+  if (mcp) return { Authorization: `Bearer ${mcp}` };
+  const internal = fromEnvFile("INTERNAL_SECRET");
+  if (internal) return { "x-internal-secret": internal };
+  console.error("No MCP_ACCESS_KEY or INTERNAL_SECRET found in .env (see the top of this file).");
   process.exit(1);
 }
 
@@ -67,7 +74,7 @@ function readCases(path) {
 async function callTool(key, name, toolArgs) {
   const res = await fetch(MCP_URL, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
+    headers: { "Content-Type": "application/json", ...key },
     body: JSON.stringify({ jsonrpc: "2.0", id: 1, method: "tools/call", params: { name, arguments: toolArgs } }),
   });
   if (!res.ok) throw new Error(`MCP server answered ${res.status}: ${await res.text()}`);
@@ -107,7 +114,7 @@ async function expectedId(key, c) {
   return hit ? hit.id.toLowerCase() : null;
 }
 
-const key = accessKey();
+const key = authHeaders();
 const all = readCases(CASES_FILE);
 const searchCases = all.filter((c) => c.mode === "search");
 const askCases = NO_ASK ? [] : all.filter((c) => c.mode === "ask");

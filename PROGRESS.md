@@ -1,10 +1,12 @@
 # Progress
 
-_Last updated: November 10, 2026_
+_Last updated: November 11, 2026_
 
-> **Live since Nov 10:** both migrations are applied, all functions are deployed,
-> and all 54 thoughts have a kind. Still to do: put the MCP password in `.env` and
-> run the retrieval test, plus the phone test below.
+> **Nov 11 (fixes only):** internal functions now need a shared secret, the
+> Telegram webhook is verified, the 4 ownerless thoughts are fixed, and 38 older
+> thoughts got tags and summaries. One step left for you: run
+> `migrations/2026-11-11b-remove-old-webhook.sql` in the SQL Editor (it removes the
+> old, already-disabled webhook that had the service key in it, and the test thought).
 
 ## What's built
 
@@ -22,38 +24,35 @@ _Last updated: November 10, 2026_
 | **Retrieval test** (Nov 9) | 10 search cases (top 3 / top 10) + 5 ask cases (is the right thought cited?), history kept | `node scripts/retrieval-test.mjs` (`--no-ask` = free search cases only) |
 | **Ask my brain** (Nov 10) | Plain-language answers from your notes, 3–6 sentences, every claim cited. Own writing weighted above saved sources; says when an answer comes only from a video or article; "Nothing in your brain on this" + 3 closest when your notes don't say. Remembers the last 5 exchanges for follow-ups. Haiku, about $0.001 per question | Telegram: `? question` or `/ask question`. Questions without `?` get **Save it / Answer it** buttons. Tap `/t_xxxxxxxx` under an answer to read that thought. `/new` forgets the conversation. Claude Desktop: the `ask_brain` tool |
 | **Answer feedback** (Nov 10) | Helpful / Wrong buttons under every answer, logged | `select * from ask_quality;` |
+| **Internal secret** (Nov 11) | `call-llm`, `enrich-thought` and `weekly-digest` return 401 unless the caller sends `x-internal-secret`. The value lives in Vault (`internal_secret`, used by the save trigger and the digest cron job), the `INTERNAL_SECRET` edge-function secret, and your git-ignored `.env` (used by the scripts). The MCP server also accepts it, so the retrieval test needs no password | Automatic |
+| **Telegram webhook check** (Nov 11) | The bot only accepts requests carrying Telegram's secret token (`TELEGRAM_WEBHOOK_SECRET`) and only replies to your chat ID. Re-register: POST to the telegram-bot URL with the `x-internal-secret` header | Automatic |
+| **Owner safety net** (Nov 11) | A thought saved without an owner gets yours (owner ID is in Vault) | Automatic |
 
 ## Maintenance scripts
 
 - `node scripts/backup.mjs`: back up before any schema change.
 - `powershell -ExecutionPolicy Bypass -File scripts\backfill.ps1`: embed anything not yet embedded (free).
 - `powershell -ExecutionPolicy Bypass -File scripts\backfill-kind.ps1`: classify anything with no kind (rules, then Haiku).
+- `powershell -ExecutionPolicy Bypass -File scriptsackfill-tags.ps1`: tag and summarize anything saved without tags (Haiku, skips course_setup). `-Preview 5` shows 5 without saving.
 - `node scripts/retrieval-test.mjs`: rerun after every change and compare with `tests/retrieval-history.csv`.
+- All scripts read `INTERNAL_SECRET` from `.env`. If you ever lose `.env`: in the SQL Editor run `select decrypted_secret from vault.decrypted_secrets where name = 'internal_secret';` and put `INTERNAL_SECRET=<that>` in `.env`.
 
 ## Known issues
 
-- `call-llm` and `enrich-thought` don't check who is calling them. Anyone with the URL could spend AI credit.
-- 48 thoughts from before Level 5 have no tags, category or summary.
-- 4 thoughts have no owner (`user_id` is empty), so they're invisible to the web app and search.
-- The MCP `list_recent` doesn't filter by owner. That's harmless with one user.
+- **Answers can blur your thinking with AI write-ups.** When an answer cites a `report` (for example, the Tesla write-up), it labels the source "an AI digest" but can still say "you concluded". Fix: change the label to "an AI write-up you saved" and tell the model not to put those claims in your voice. Found by retrieval test A4 on Nov 11.
+- "Mathew 5:27-32" is too short to tag, so it stays untagged.
 - `/ search x` (with a space after the slash) is saved as a thought instead of searched.
 - The Telegram bot can't receive voice notes (it would need a paid transcription service). Dictate with your keyboard's mic key instead.
 - `?` used to mean search in Telegram; it now asks a question. Use `/search` for the plain list.
 
-## Go-live steps (the owner runs these, in order)
+## Retrieval scores
 
-1. Back up: `node scripts/backup.mjs`
-2. SQL Editor → run `migrations/2026-11-09-metadata.sql`, then `migrations/2026-11-10-ask-brain.sql`
-3. Deploy:
-   ```
-   npx supabase functions deploy call-llm --no-verify-jwt
-   npx supabase functions deploy enrich-thought --no-verify-jwt
-   npx supabase functions deploy weekly-digest --no-verify-jwt
-   npx supabase functions deploy telegram-bot --no-verify-jwt
-   npx supabase functions deploy open-brain-mcp --no-verify-jwt
-   ```
-4. `powershell -ExecutionPolicy Bypass -File scripts\backfill-kind.ps1`
-5. Put `MCP_ACCESS_KEY=...` in `.env`, then `node scripts/retrieval-test.mjs`
+| Date | Change | Search top 3 | Search top 10 | Ask cited |
+|---|---|---|---|---|
+| Nov 11 | Before tag backfill | 10/10 | 10/10 | 5/5 |
+| Nov 11 | After tag backfill (38 thoughts) | 10/10 | 10/10 | 4/5 (A4: Tesla write-up now leads; see Known issues) |
+
+The pre-filled cases are easy (everything already ranks in the top 3), so they mostly catch regressions. Add harder ones: a vague phrasing, or a detail buried deep in a long video.
 
 ## How to test Ask my brain on your phone
 
@@ -68,6 +67,6 @@ _Last updated: November 10, 2026_
 
 ## What's next
 
-1. Lock down `call-llm` and `enrich-thought` so they need the service key.
-2. Tag the 48 untagged older thoughts (about 48 Haiku calls, under $0.01).
+1. Fix the AI write-up attribution in Ask answers (see Known issues).
+2. Add harder retrieval test cases, so the test can show improvements and not only regressions.
 3. After a week of Helpful/Wrong taps: decide whether Haiku is good enough or Ask should move to Sonnet 5.5 (about 1–2¢ per question).
