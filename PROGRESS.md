@@ -110,8 +110,7 @@ The pre-filled cases are easy (everything already ranks in the top 3), so they m
 ## Waiting on you (Telegram)
 
 1. **Old "paste the video link" messages**: all 3 videos are filled now. Ignore those bot messages (replying would only re-read the same video).
-2. **2 leftovers to hide**: "Delete that" and "Look up the videos and find the link and transcripts and add them". The second was a request to the bot, saved as a thought and labelled a source. To archive both (hidden, not deleted), run in the SQL Editor: `update thoughts set status = 'archived' where id in ('8544b68e-9116-48f4-853c-6a104f388764', '6933dc17-7686-4c12-848b-1190ae52ea9d');`
-3. **20 goal proposals**, one at a time. The first one hasn't been answered yet. Tap Track or Not a goal. `/goals` shows what you track and resumes the questions.
+2. **20 goal proposals**, one at a time. The first one hasn't been answered yet. Tap Track or Not a goal. `/goals` shows what you track and resumes the questions.
 
 ## How to test content quality on your phone
 
