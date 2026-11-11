@@ -14,6 +14,7 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { askBrain, renderAnswer } from "../_shared/ask.ts";
 import { INTERNAL_HEADER, internalSecret, safeEqual } from "../_shared/internal-auth.ts";
+import { KIND_LABEL, SECTION_LABEL, sectionOf } from "../_shared/kinds.ts";
 
 // ---------------------------------------------------------------------
 // 1. SETUP — read settings that Supabase provides to the function
@@ -87,6 +88,13 @@ const TOOLS = [
       type: "object",
       properties: {
         question: { type: "string", description: "The question, in plain words" },
+        section: {
+          type: "string",
+          enum: ["personal", "library"],
+          description:
+            "Optional. 'personal' = the user and what they know (their notes, class notes, AI write-ups they kept); " +
+            "'library' = things they found or made (saved videos, articles, PDFs, project docs). Leave out to use both.",
+        },
       },
       required: ["question"],
     },
@@ -95,6 +103,7 @@ const TOOLS = [
     name: "search_thoughts",
     description:
       "Search the user's Open Brain — their personal collection of notes, " +
+      "split into two sections (each result is labelled): Personal and Library. " +
       "YouTube transcripts, articles, PDFs, voice notes, and Telegram " +
       "messages. Searches by MEANING and by keyword together, so a plain " +
       "description works even if the user never used those exact words " +
@@ -107,6 +116,13 @@ const TOOLS = [
         query: {
           type: "string",
           description: "What to look for, in plain words, e.g. 'calculus' or 'ways I study best'",
+        },
+        section: {
+          type: "string",
+          enum: ["personal", "library"],
+          description:
+            "Optional. 'personal' = the user and what they know (their notes, class notes, AI write-ups they kept); " +
+            "'library' = things they found or made (saved videos, articles, PDFs, project docs). Leave out to use both.",
         },
       },
       required: ["query"],
@@ -165,7 +181,19 @@ const TOOLS = [
 // ---------------------------------------------------------------------
 // 3. TOOL LOGIC — what actually happens when a tool runs
 // ---------------------------------------------------------------------
-type Thought = { id: string | number; content: string; created_at: string };
+type Thought = { id: string | number; content: string; created_at: string; kind?: string | null };
+
+function sectionArg(args: Record<string, unknown>): "personal" | "library" | null {
+  const v = String(args.section ?? "").toLowerCase();
+  return v === "personal" || v === "library" ? v : null;
+}
+
+// "Personal · my thought" — shown on every result.
+function whereLabel(kind: string | null | undefined): string {
+  const section = sectionOf(kind);
+  if (!section) return "Unsorted";
+  return SECTION_LABEL[section] + " · " + (KIND_LABEL[kind as string] ?? kind);
+}
  
 // Turn database rows into readable text for the AI.
 function formatThoughts(rows: Thought[], emptyMessage: string): string {
@@ -178,7 +206,8 @@ function formatThoughts(rows: Thought[], emptyMessage: string): string {
         text = text.slice(0, MAX_CHARS_PER_THOUGHT) +
           ` … [shortened — ${extra} more characters]`;
       }
-      return `[${t.created_at}] (id: ${t.id})\n${text}`;
+      const label = t.kind !== undefined ? ` · ${whereLabel(t.kind)}` : "";
+      return `[${t.created_at}] (id: ${t.id})${label}\n${text}`;
     })
     .join("\n\n---\n\n");
 }
@@ -192,12 +221,13 @@ async function searchThoughts(args: Record<string, unknown>): Promise<string> {
   if (OWNER_USER_ID) {
     try {
       const vector = await embedder.run(query, { mean_pool: true, normalize: true });
-      const { data, error } = await supabase.rpc("hybrid_search", {
+      const { data, error } = await supabase.rpc("hybrid_search_v3", {
         query_embedding: JSON.stringify(Array.from(vector as number[])),
         query_text: query,
         match_count: 10,
         p_user_id: OWNER_USER_ID,
         min_similarity: MIN_SIMILARITY,
+        p_section: sectionArg(args),
       });
       if (error) throw error;
       return formatThoughts(data as Thought[], `No thoughts found about: ${query}`);
@@ -208,7 +238,9 @@ async function searchThoughts(args: Record<string, unknown>): Promise<string> {
 
   // Old keyword search: "ilike" ignores upper/lower case.
   const words = query.split(/\s+/).filter(Boolean).slice(0, 5);
-  let request = supabase.from("thoughts").select("id, content, created_at").eq("user_id", OWNER_USER_ID);
+  const section = sectionArg(args);
+  let request = supabase.from("thoughts").select("id, content, created_at, kind").eq("user_id", OWNER_USER_ID);
+  request = section ? request.eq("section", section) : request.in("section", ["personal", "library"]);
   for (const word of words) {
     request = request.ilike("content", `%${word}%`);
   }
@@ -292,6 +324,7 @@ async function askBrainTool(args: Record<string, unknown>): Promise<string> {
     channel: "mcp",
     chatId: "mcp",
     useHistory: false,
+    section: sectionArg(args),
   });
   return renderAnswer(res, "mcp");
 }

@@ -2,6 +2,9 @@
 
 _Last updated: November 11, 2026_
 
+> **Nov 11 (later): Sections.** Personal and Library, derived from kind. Live in
+> Telegram, MCP and Ask. The web app tabs go live after the next push to GitHub.
+>
 > **Nov 11 (fixes only):** internal functions now need a shared secret, the
 > Telegram webhook is verified, the 4 ownerless thoughts are fixed, and 38 older
 > thoughts got tags and summaries. The old webhook (which had the service key
@@ -27,6 +30,12 @@ _Last updated: November 11, 2026_
 | **Internal secret** (Nov 11) | `call-llm`, `enrich-thought` and `weekly-digest` return 401 unless the caller sends `x-internal-secret`. The value lives in Vault (`internal_secret`, used by the save trigger and the digest cron job), the `INTERNAL_SECRET` edge-function secret, and your git-ignored `.env` (used by the scripts). The MCP server also accepts it, so the retrieval test needs no password | Automatic |
 | **Telegram webhook check** (Nov 11) | The bot only accepts requests carrying Telegram's secret token (`TELEGRAM_WEBHOOK_SECRET`) and only replies to your chat ID. Re-register: POST to the telegram-bot URL with the `x-internal-secret` header | Automatic |
 | **Owner safety net** (Nov 11) | A thought saved without an owner gets yours (owner ID is in Vault) | Automatic |
+| **Sections** (Nov 11) | **Personal** = my_thought, class_note, report (you and what you know). **Library** = source, project_doc (things you found or made). course_setup stays hidden. Derived from kind, never labelled by hand (`thoughts.section`, computed) | `select section, count(*) from thoughts group by 1;` |
+| **Section search** (Nov 11) | `/me words` = Personal only, `/lib words` = Library only, `/search words` = both with each result labelled. MCP `search_thoughts` and `ask_brain` take an optional `section` | Telegram, Claude Desktop |
+| **Two-part answers** (Nov 11) | Ask answers in "🧠 What you know" and "📚 From your library". "About me" questions (goals, what do I think…) search Personal first. AI write-ups are never put in your voice | `? what are my goals` |
+| **Kind switch + log** (Nov 11) | Every Telegram save says its section, with **Move to Library / Personal** and **Change kind** buttons. Every kind change, from anywhere, is logged (old, new, when) | `select * from kind_changes order by changed_at desc;` |
+| **Takeaways** (Nov 11) | Saving a Library item (from Telegram, the web app or Claude Desktop) gets "💡 What's your takeaway?" in Telegram. Reply to that message to save it as your own note, linked to the item. `/takeaway words` adds one later; `/takeaway` alone lists items without one. Ask ranks your takeaway above the item | Reply to the bot's question |
+| **Web app sections** (Nov 11) | All / Personal / Library filters on Recent; each card shows its section and has a kind picker | Recent tab, after the push |
 
 ## Maintenance scripts
 
@@ -39,7 +48,9 @@ _Last updated: November 11, 2026_
 
 ## Known issues
 
-- **Answers can blur your thinking with AI write-ups.** When an answer cites a `report` (for example, the Tesla write-up), it labels the source "an AI digest" but can still say "you concluded". Fix: change the label to "an AI write-up you saved" and tell the model not to put those claims in your voice. Found by retrieval test A4 on Nov 11.
+- Retrieval test A4 ("what did I decide about investing") is variable. Answers draw on several relevant notes and don't always cite the expected voice note. The answer itself is correct and cited.
+- Your "About Me" profile is a `project_doc`, so it sits in Library. If you think of it as about you, move it to Personal with one tap.
+- A takeaway counts only if you *reply* to the bot's question. A plain next message is saved as a normal thought.
 - "Mathew 5:27-32" is too short to tag, so it stays untagged.
 - `/ search x` (with a space after the slash) is saved as a thought instead of searched.
 - The Telegram bot can't receive voice notes (it would need a paid transcription service). Dictate with your keyboard's mic key instead.
@@ -51,6 +62,7 @@ _Last updated: November 11, 2026_
 |---|---|---|---|---|
 | Nov 11 | Before tag backfill | 10/10 | 10/10 | 5/5 |
 | Nov 11 | After tag backfill (38 thoughts) | 10/10 | 10/10 | 4/5 (A4: Tesla write-up now leads; see Known issues) |
+| Nov 11 | After Sections | 10/10 | 10/10 | 4/5 (A4 variable; see Known issues) |
 
 The pre-filled cases are easy (everything already ranks in the top 3), so they mostly catch regressions. Add harder ones: a vague phrasing, or a detail buried deep in a long video.
 
@@ -65,8 +77,16 @@ The pre-filled cases are easy (everything already ranks in the top 3), so they m
 7. Send `/new`, then `? what about the first one`. It should no longer know what you mean.
 8. Send a normal note like `Remember to email my lab partner`. It's saved straight away, with no buttons.
 
+## How to test Sections on your phone
+
+1. Reply to the bot's "💡 What's your takeaway from Peptides…" message (swipe left on it) with a sentence. You should get "Takeaway saved to Personal, linked to…".
+2. Send `? what do I think about peptides`. Your takeaway should lead under 🧠 What you know, with the video under 📚 From your library.
+3. Send a normal note. The reply should say "🧠 Saved to Personal (my thought)" with buttons. Tap **Move to Library**: it changes, and the bot asks for a takeaway (ignore it).
+4. Send `/me sleep`, then `/lib sleep`. Personal-only and Library-only results.
+5. Send `/takeaway`. You should see your Library items without a takeaway.
+6. After the GitHub push: the web app's Recent tab has All / Personal / Library, and a kind picker on each card.
+
 ## What's next
 
-1. Fix the AI write-up attribution in Ask answers (see Known issues).
-2. Add harder retrieval test cases, so the test can show improvements and not only regressions.
-3. After a week of Helpful/Wrong taps: decide whether Haiku is good enough or Ask should move to Sonnet 5.5 (about 1–2¢ per question).
+1. Add harder retrieval test cases, so the test can show improvements and not only regressions.
+2. After a week of Helpful/Wrong taps: decide whether Haiku is good enough or Ask should move to Sonnet 5.5 (about 1–2¢ per question).

@@ -256,6 +256,21 @@
 
   /* ---------- thought list ---------- */
   .thought time { display: block; font-size: 0.78rem; color: var(--muted); margin-bottom: 6px; }
+  /* Sections (Personal / Library), derived from kind */
+  .chips { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
+  .chip {
+    border-radius: 999px; padding: 6px 12px; min-height: 36px;
+    background: var(--card); color: var(--muted); font-size: 0.88rem;
+  }
+  .chip[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); color: #fff; }
+  .thought .meta { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 8px; }
+  .badge {
+    font-size: 0.75rem; padding: 2px 8px; border-radius: 999px;
+    border: 1px solid var(--line); color: var(--muted);
+  }
+  .badge.personal { border-color: var(--accent); color: #c7c8ff; }
+  .badge.library { border-color: var(--ok); color: #a7f3c0; }
+  .thought .meta select { width: auto; min-height: 32px; padding: 2px 8px; font-size: 0.82rem; }
   .thought .body { white-space: pre-wrap; overflow-wrap: anywhere; }
   .thought .link { margin-top: 8px; font-size: 0.88rem; }
   .empty { color: var(--muted); text-align: center; padding: 28px 12px; }
@@ -482,6 +497,11 @@
       <div class="row tight" style="justify-content:space-between;align-items:center;margin-bottom:12px">
         <h2 style="margin:0">Last 20 thoughts</h2>
         <button id="recentRefresh" type="button">Refresh</button>
+      </div>
+      <div class="chips" id="recentFilter" role="group" aria-label="Show section">
+        <button class="chip" type="button" data-section="all" aria-pressed="true">All</button>
+        <button class="chip" type="button" data-section="personal" aria-pressed="false">🧠 Personal</button>
+        <button class="chip" type="button" data-section="library" aria-pressed="false">📚 Library</button>
       </div>
       <div id="recentList"></div>
     </section>
@@ -1129,6 +1149,77 @@
      ===================================================================== */
   var PREVIEW = 600;
 
+  // Sections are derived from kind (the database's section_of() is the
+  // source of truth; this copy is only for labels and the picker).
+  var KINDS = {
+    personal: [['my_thought', 'My thought'], ['class_note', 'Class note'], ['report', 'AI write-up']],
+    library: [['source', 'Saved source'], ['project_doc', 'Project doc']]
+  };
+  var SECTION_NAME = { personal: '🧠 Personal', library: '📚 Library', hidden: 'Hidden' };
+
+  // Badge + "change kind" picker. Every change is logged by the database
+  // (kind_changes: old value, new value, when).
+  function kindControls(row) {
+    var meta = document.createElement('div');
+    meta.className = 'meta';
+    var badge = document.createElement('span');
+    badge.className = 'badge ' + (row.section || '');
+    badge.textContent = row.takeaway_of ? '💡 Takeaway · ' + SECTION_NAME.personal
+      : (SECTION_NAME[row.section] || 'Unsorted');
+    meta.appendChild(badge);
+
+    var picker = document.createElement('select');
+    picker.setAttribute('aria-label', 'Kind of thought');
+    var known = false;
+    ['personal', 'library'].forEach(function (section) {
+      var group = document.createElement('optgroup');
+      group.label = SECTION_NAME[section];
+      KINDS[section].forEach(function (k) {
+        var opt = document.createElement('option');
+        opt.value = k[0];
+        opt.textContent = k[1];
+        if (row.kind === k[0]) { opt.selected = true; known = true; }
+        group.appendChild(opt);
+      });
+      picker.appendChild(group);
+    });
+    if (!known) {  // course_setup or not sorted yet: show it, but don't offer it
+      var current = document.createElement('option');
+      current.value = row.kind || '';
+      current.textContent = row.kind ? row.kind.replace('_', ' ') : 'Not sorted yet';
+      current.selected = true;
+      current.disabled = true;
+      picker.insertBefore(current, picker.firstChild);
+    }
+    picker.addEventListener('change', async function () {
+      var kind = picker.value;
+      picker.disabled = true;
+      try {
+        var result = await db.from('thoughts')
+          .update({ kind: kind, kind_set_by: 'manual' })
+          .eq('id', row.id)
+          .select('kind, section')
+          .single();
+        if (result.error) throw result.error;
+        row.kind = result.data.kind;
+        row.section = result.data.section;
+        badge.className = 'badge ' + (row.section || '');
+        badge.textContent = row.takeaway_of ? '💡 Takeaway · ' + SECTION_NAME.personal
+          : (SECTION_NAME[row.section] || 'Unsorted');
+        toast('Moved to ' + (SECTION_NAME[row.section] || row.section), 'ok');
+        if (recentSection !== 'all' && row.section !== recentSection) loadRecent();
+      } catch (err) {
+        console.error(err);
+        toast('Could not change it: ' + errorText(err), 'bad');
+        loadRecent();
+      } finally {
+        picker.disabled = false;
+      }
+    });
+    meta.appendChild(picker);
+    return meta;
+  }
+
   function thoughtCard(row) {
     var card = document.createElement('article');
     card.className = 'card thought';
@@ -1137,6 +1228,7 @@
     var when = row.created_at ? new Date(row.created_at) : null;
     time.textContent = when && !isNaN(when) ? when.toLocaleString() : '';
     card.appendChild(time);
+    if (row.kind !== undefined && row.id) card.appendChild(kindControls(row));
 
     var full = row.content || '';
     var body = document.createElement('div');
@@ -1175,12 +1267,16 @@
     rows.forEach(function (row) { container.appendChild(thoughtCard(row)); });
   }
 
+  var recentSection = 'all';   // all | personal | library
+
   async function loadRecent() {
     if (!user) return;
     var list = $('recentList');
     try {
-      var result = await db.from('thoughts')
-        .select('id, content, created_at')
+      var query = db.from('thoughts')
+        .select('id, content, created_at, kind, section, takeaway_of');
+      if (recentSection !== 'all') query = query.eq('section', recentSection);
+      var result = await query
         .order('created_at', { ascending: false })
         .limit(20);
       if (result.error) throw result.error;
@@ -1297,6 +1393,15 @@
   $('searchForm').addEventListener('submit', runSearch);
   $('searchClear').addEventListener('click', clearSearch);
   $('recentRefresh').addEventListener('click', loadRecent);
+  Array.prototype.forEach.call(document.querySelectorAll('#recentFilter .chip'), function (chip) {
+    chip.addEventListener('click', function () {
+      recentSection = chip.getAttribute('data-section');
+      Array.prototype.forEach.call(document.querySelectorAll('#recentFilter .chip'), function (c) {
+        c.setAttribute('aria-pressed', c === chip ? 'true' : 'false');
+      });
+      loadRecent();
+    });
+  });
 
   /* ---------------- start ---------------- */
   async function start() {

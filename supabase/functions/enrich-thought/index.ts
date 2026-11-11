@@ -24,6 +24,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { internalHeaders, rejectUnlessInternal } from "../_shared/internal-auth.ts";
+import { KINDS, type KindInput, kindByRules, sectionOf } from "../_shared/kinds.ts";
 
 const CATEGORIES = ["idea", "learning", "question", "reference", "plan", "reflection"];
 const MIN_LENGTH = 20;        // skip tiny notes like "test" or "ok"
@@ -64,36 +65,12 @@ Rules:
 // my_thought, project_doc and class_note are the owner's own writing;
 // source is someone else's (videos, articles); course_setup is the build
 // prompts (left out of search and digests); report is AI-written summaries.
-const KINDS = ["my_thought", "source", "course_setup", "project_doc", "class_note", "report"];
-
 const KIND_GUIDE = `- my_thought: the owner's own personal thought, idea, goal, feeling or reflection
 - project_doc: a longer document the owner wrote about themselves, a project, or their plans
 - class_note: notes, assignments, essays or lab material for a class the owner is taking
 - source: content made by someone else that the owner saved (video transcript, article, web page, outside PDF)
 - course_setup: instructions or prompts for building this note-taking app itself
 - report: an AI-written summary, digest or research write-up`;
-
-type KindInput = {
-  content?: string | null;
-  category?: string | null;
-  metadata?: Record<string, unknown> | null;
-};
-
-// Free, instant rules. Returns null when the rules can't tell.
-function kindByRules(t: KindInput): string | null {
-  const content = (t.content ?? "").trim();
-  const source = typeof t.metadata?.source === "string" ? t.metadata.source : "";
-
-  if (t.category === "digest" || /^Weekly digest:/i.test(content)) return "report";
-  if (/^(Level \d+ on how I made this brain|The overview for this brain)/i.test(content)) return "course_setup";
-  if (source === "url" || source === "youtube") return "source";
-  if (/^(\u{1F4F9} YouTube:|\u{1F517} URL:)/u.test(content)) return "source";
-  if (/^https?:\/\/\S+$/.test(content)) return "source";          // a bare link
-  if (/^\u{1F3A4} Voice:/u.test(content)) return "my_thought";    // the owner speaking
-  if (source === "telegram") return "my_thought";
-  if (content.length <= 600 && !/^\u{1F4C4} PDF:/u.test(content)) return "my_thought";
-  return null; // PDFs and long unlabelled writing: ask the AI
-}
 
 function parseKind(text: string): string | null {
   const match = text.match(/\{[\s\S]*\}/);
@@ -111,7 +88,9 @@ function parseKind(text: string): string | null {
 
 // Save kind on its own, so a problem here can never undo tagging.
 async function saveKind(supabase: SupabaseClient, id: string, kind: string, setBy: "rule" | "llm") {
-  const { error } = await supabase.from("thoughts").update({ kind, kind_set_by: setBy }).eq("id", id);
+  // Never overwrite a kind the owner picked by hand.
+  const { error } = await supabase.from("thoughts").update({ kind, kind_set_by: setBy })
+    .eq("id", id).or("kind_set_by.is.null,kind_set_by.neq.manual");
   if (error) console.log(`could not save kind for ${id}: ${error.message}`);
   return !error;
 }
@@ -534,6 +513,19 @@ Deno.serve(async (req) => {
 
     const tagged = await tagThought(record, supabaseUrl, serviceKey, !record.kind && !ruleKind);
     if (tagged.kind) await saveKind(createClient(supabaseUrl, serviceKey), record.id, tagged.kind, "llm");
+
+    // A new Library item (from the web app, MCP, or a long Telegram save)
+    // gets a "What's your takeaway?" in Telegram. Saves where the bot already
+    // set the kind itself asked there, so they're skipped here.
+    const decidedKind = ruleKind ?? tagged.kind ?? null;
+    if (decidedKind && sectionOf(decidedKind) === "library") {
+      const ask = fetch(`${supabaseUrl}/functions/v1/telegram-bot`, {
+        method: "POST",
+        headers: internalHeaders(),
+        body: JSON.stringify({ action: "ask_takeaway", thought_id: record.id }),
+      }).then((r) => r.text()).catch((e) => console.log(`takeaway prompt failed: ${e}`));
+      EdgeRuntime.waitUntil(ask);
+    }
 
     // Embedding runs for every new thought, tagged or not, in the
     // background after we've answered the webhook. A long capture's chunks

@@ -44,14 +44,36 @@ built and what's next.
 8. **Keep `PROGRESS.md` updated:** what's built, how to use it, what's next.
 9. **Telegram buttons use inline keyboards** with `callback_query` handling
    in the existing `telegram-bot` function. `handleCallback` routes by a
-   `callback_data` prefix (`fb:` feedback, `sv:`/`an:` Save it/Answer it).
-   Add new buttons there, and keep `callback_data` under 64 bytes.
+   `callback_data` prefix (`fb:` feedback, `sv:`/`an:` Save it/Answer it,
+   `k:<kind>:<id>` set kind, `km:` kind menu, `tk:` pick takeaway item,
+   `op:` open item). Add new buttons there, and keep `callback_data` under
+   64 bytes.
+10. **Never delete thoughts. Sections are derived from kind.** Personal =
+   `my_thought`, `class_note`, `report`; Library = `source`, `project_doc`;
+   `course_setup` stays hidden. Never store a section by hand: change the
+   mapping only in `public.section_of()` (and its copy in
+   `_shared/kinds.ts` and `index.html`).
 
 ## Facts worth knowing
 
-- **Search:** `hybrid_search` (same signature the web app, bot and MCP use)
-  wraps `hybrid_search_v2`, which also returns `kind`/`status` and takes
-  `include_kinds text[]` (null = everything except `course_setup`).
+- **Search:** `hybrid_search` (web app's search-brain) wraps
+  `hybrid_search_v2` (adds `kind`/`status`, `include_kinds text[]`; null =
+  everything except `course_setup`). `hybrid_search_v3` (bot, MCP, Ask) adds
+  `p_section` ('personal' | 'library' | null) and returns `section` and
+  `takeaway_of`.
+- **Sections:** `thoughts.section` is a generated column =
+  `section_of(kind)`. After changing `section_of()`, refresh with
+  `update thoughts set kind = kind;`. Every kind change is logged in
+  `kind_changes` by the `thoughts_log_kind_change` trigger (old, new, by,
+  when). `enrich-thought` never overwrites `kind_set_by = 'manual'`.
+- **Takeaways:** a `my_thought` with `takeaway_of` = the Library item's id,
+  content `💡 Takeaway on "<title>": …`. Prompts live in `telegram_prompts`
+  (the bot's force-reply message id → item). New Library items saved
+  outside the bot get a prompt via `telegram-bot` `{action: "ask_takeaway"}`
+  from enrich-thought. Ask adds takeaways of matched items, ranked above
+  the item.
+- **Web app:** `index.html` deploys through Vercel only when pushed to
+  GitHub. Ask the owner before pushing.
   Embeddings: gte-small, 384 dims, via `Supabase.ai.Session` inside edge
   functions only. Thoughts over 300 words also get chunks in `thought_chunks`.
 - **Enrichment:** the `enrich_on_insert_v2` trigger (`notify_enrich_thought()`,

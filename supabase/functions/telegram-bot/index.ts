@@ -16,6 +16,9 @@ import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { askBrain, clearHistory, renderAnswer } from '../_shared/ask.ts'
 import { INTERNAL_HEADER, rejectUnlessInternal, safeEqual } from '../_shared/internal-auth.ts'
+import {
+  DEFAULT_KIND, KIND_LABEL, kindByRules, PICKABLE, type Section, SECTION_LABEL, sectionOf,
+} from '../_shared/kinds.ts'
 
 // Secrets. The first three are ones you added; the SUPABASE_ ones are
 // provided automatically by Supabase.
@@ -44,33 +47,37 @@ const db = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
 // Levels 6 + 7: Supabase's free built-in model that turns text into meaning.
 const embedder = new Supabase.ai.Session('gte-small')
 
+type ListRow = { id?: string; content: string; created_at?: string; kind?: string | null; summary?: string | null }
+
 // Meaning + keyword search over the owner's thoughts, best first.
-// Falls back to the old keyword search if anything goes wrong.
-async function searchBrain(query: string) {
+// section: only Personal or only Library; null = both (course_setup is
+// always left out). Falls back to keyword search if anything goes wrong.
+async function searchBrain(query: string, section: 'personal' | 'library' | null = null, count = 5) {
   try {
     const vector = await embedder.run(query, { mean_pool: true, normalize: true })
-    const { data, error } = await db.rpc('hybrid_search', {
+    const { data, error } = await db.rpc('hybrid_search_v3', {
       query_embedding: JSON.stringify(Array.from(vector as number[])),
       query_text: query,
-      match_count: 5,
+      match_count: count,
       p_user_id: OWNER_USER_ID,
       min_similarity: 0.78,
+      p_section: section,
     })
     if (error) throw error
-    return data as { content: string; created_at: string }[]
+    return data as ListRow[]
   } catch (err) {
     console.error('hybrid search failed, using keyword search:', err)
     // Treat % and _ as plain characters, not wildcards
     const safe = query.replace(/[\\%_]/g, '\\$&')
-    const { data, error } = await db
+    let q = db
       .from('thoughts')
-      .select('content, created_at')
+      .select('id, content, created_at, kind, summary')
       .eq('user_id', OWNER_USER_ID)
       .ilike('content', `%${safe}%`)
-      .order('created_at', { ascending: false })
-      .limit(5)
+    q = section ? q.eq('section', section) : q.in('section', ['personal', 'library'])
+    const { data, error } = await q.order('created_at', { ascending: false }).limit(count)
     if (error) throw error
-    return data
+    return data as ListRow[]
   }
 }
 
@@ -121,15 +128,28 @@ function shorten(text: string, max = 300): string {
   return clean.length > max ? clean.slice(0, max) + '...' : clean
 }
 
-function formatList(rows: { content: string; created_at?: string }[]): string {
+// "Personal · my thought" — the section and kind of a thought.
+function whereLabel(kind: string | null | undefined): string {
+  const section = sectionOf(kind)
+  if (!section) return 'Unsorted'
+  return `${SECTION_LABEL[section]} · ${KIND_LABEL[kind as string] ?? kind}`
+}
+
+function formatList(rows: ListRow[]): string {
   return rows
     .map((row, i) => {
       const date = row.created_at
         ? new Date(row.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })
         : ''
-      return `${i + 1}. ${date ? `[${date}] ` : ''}${shorten(row.content)}`
+      const label = row.kind !== undefined ? `{${whereLabel(row.kind)}} ` : ''
+      return `${i + 1}. ${date ? `[${date}] ` : ''}${label}${shorten(row.content)}`
     })
     .join('\n\n')
+}
+
+function titleOf(row: { content?: string | null; summary?: string | null }): string {
+  const first = (row.content ?? '').split('\n').find((l) => l.trim()) ?? ''
+  return shorten(row.summary?.trim() || first, 80)
 }
 
 const HELP =
@@ -137,7 +157,10 @@ const HELP =
   'Send any message to save it as a thought.\n' +
   '? question (or /ask question) to get an answer from your notes\n' +
   '/new to start a fresh conversation (forget follow-ups)\n' +
-  '/search words to list matching thoughts\n' +
+  '/search words: search everything, each result labelled\n' +
+  '/me words: search only Personal (you and what you know)\n' +
+  '/lib words: search only Library (things you found or made)\n' +
+  '/takeaway words: add your takeaway to a Library item\n' +
   '/recent to see your last 5 thoughts'
 
 // ---------------------------------------------------------------------------
@@ -158,7 +181,11 @@ const feedbackKeyboard = (turnId: string): Keyboard => [[
   { text: '\u{1F44E} Wrong', callback_data: `fb:w:${turnId}` },
 ]]
 
-async function answerQuestion(chatId: number, question: string): Promise<void> {
+async function answerQuestion(
+  chatId: number,
+  question: string,
+  section: 'personal' | 'library' | null = null,
+): Promise<void> {
   await telegram('sendChatAction', { chat_id: chatId, action: 'typing' })
   try {
     const res = await askBrain({
@@ -170,6 +197,7 @@ async function answerQuestion(chatId: number, question: string): Promise<void> {
       channel: 'telegram',
       chatId: String(chatId),
       useHistory: true,
+      section,
     })
     const text = renderAnswer(res, 'telegram')
     await reply(chatId, text, res.turnId ? feedbackKeyboard(res.turnId) : undefined)
@@ -185,13 +213,98 @@ function later(work: Promise<unknown>) {
   EdgeRuntime.waitUntil(work.catch((err) => console.error('background work failed:', err)))
 }
 
-async function saveThought(text: string, messageId?: number) {
-  const { error } = await db.from('thoughts').insert({
+type SavedRow = { id: string; kind: string | null; content: string; summary?: string | null }
+
+// Save a message. The kind is decided right here by the free rules when
+// they can, so the confirmation can name the section straight away; long
+// unclear texts are sorted by enrich-thought a moment later.
+async function saveThought(text: string, messageId?: number): Promise<SavedRow> {
+  const metadata = { source: 'telegram', telegram_message_id: messageId }
+  const kind = kindByRules({ content: text, metadata })
+  const { data, error } = await db.from('thoughts').insert({
     user_id: OWNER_USER_ID,
     content: text,
-    metadata: { source: 'telegram', telegram_message_id: messageId },
-  })
+    metadata,
+    ...(kind ? { kind, kind_set_by: 'rule' } : {}),
+  }).select('id, kind, content, summary').single()
   if (error) throw error
+  return data as SavedRow
+}
+
+// --- Sections: confirmation + one-tap kind switch ---------------------------
+function kindKeyboard(id: string, kind: string | null): Keyboard {
+  const section = sectionOf(kind)
+  const flip = section === 'library'
+    ? { text: '\u{1F9E0} Move to Personal', callback_data: `k:${DEFAULT_KIND.personal}:${id}` }
+    : { text: '\u{1F4DA} Move to Library', callback_data: `k:${DEFAULT_KIND.library}:${id}` }
+  return [[flip, { text: '✏️ Change kind', callback_data: `km:${id}` }]]
+}
+
+function savedText(kind: string | null): string {
+  const section = sectionOf(kind)
+  if (!section) return 'Saved to your brain. Sorting it into a section now.'
+  const icon = section === 'library' ? '\u{1F4DA}' : '\u{1F9E0}'
+  return `${icon} Saved to ${SECTION_LABEL[section as Section]} (${KIND_LABEL[kind as string] ?? kind})`
+}
+
+async function confirmSaved(chatId: number | string, saved: SavedRow): Promise<void> {
+  await reply(chatId, savedText(saved.kind), sectionOf(saved.kind) ? kindKeyboard(saved.id, saved.kind) : undefined)
+  if (sectionOf(saved.kind) === 'library') await askTakeaway(chatId, saved.id)
+}
+
+// --- Takeaways ---------------------------------------------------------------
+// The question is sent in reply mode: replying to it saves the takeaway.
+// Ignoring it is fine — nothing else waits on it.
+async function askTakeaway(chatId: number | string, thoughtId: string): Promise<void> {
+  const { data: item } = await db
+    .from('thoughts')
+    .select('id, content, summary, section')
+    .eq('id', thoughtId)
+    .eq('user_id', OWNER_USER_ID)
+    .maybeSingle()
+  if (!item || item.section !== 'library') return
+  const sent = await telegram('sendMessage', {
+    chat_id: chatId,
+    text: `\u{1F4A1} What's your takeaway from "${titleOf(item)}"?\nReply to this message (optional, ignore it to skip).`,
+    disable_web_page_preview: true,
+    reply_markup: { force_reply: true, input_field_placeholder: 'Your takeaway (optional)' },
+  }) as { message_id?: number } | null
+  if (!sent?.message_id) return
+  const { error } = await db.from('telegram_prompts').insert({
+    user_id: OWNER_USER_ID,
+    chat_id: String(chatId),
+    message_id: sent.message_id,
+    purpose: 'takeaway',
+    thought_id: thoughtId,
+  })
+  if (error) console.error('could not store takeaway prompt:', error.message)
+}
+
+async function saveTakeaway(chatId: number | string, itemId: string, text: string, messageId?: number) {
+  const { data: item } = await db
+    .from('thoughts')
+    .select('id, content, summary')
+    .eq('id', itemId)
+    .eq('user_id', OWNER_USER_ID)
+    .maybeSingle()
+  if (!item) {
+    await reply(chatId, 'I could not find the item this takeaway is for, so I saved it as a normal thought.')
+    await confirmSaved(chatId, await saveThought(text, messageId))
+    return
+  }
+  // The title goes into the text, so search finds the takeaway by topic too.
+  const { data, error } = await db.from('thoughts').insert({
+    user_id: OWNER_USER_ID,
+    content: `\u{1F4A1} Takeaway on "${titleOf(item)}": ${text}`,
+    kind: 'my_thought',
+    kind_set_by: 'rule',
+    takeaway_of: item.id,
+    metadata: { source: 'telegram', telegram_message_id: messageId, takeaway_of: item.id },
+  }).select('id').single()
+  if (error) throw error
+  await reply(chatId, `\u{1F4A1} Takeaway saved to Personal, linked to "${titleOf(item)}".`,
+    [[{ text: '\u{1F4C4} Open the item', callback_data: `op:${item.id}` }]])
+  return data
 }
 
 // /t_1a2b3c4d — show one thought in full. The 8 characters are the start of
@@ -293,16 +406,100 @@ async function handleCallback(cb: any): Promise<void> {
       return
     }
     await telegram('answerCallbackQuery', { callback_query_id: cb.id })
+    if (resolution === 'saved') {
+      const saved = await saveThought(row.text, row.message_id ?? undefined)
+      await telegram('editMessageText', {
+        chat_id: chatId,
+        message_id: messageId,
+        text: savedText(saved.kind),
+        ...(sectionOf(saved.kind) ? { reply_markup: { inline_keyboard: kindKeyboard(saved.id, saved.kind) } } : {}),
+      })
+      if (sectionOf(saved.kind) === 'library') await askTakeaway(chatId, saved.id)
+    } else {
+      await telegram('editMessageText', { chat_id: chatId, message_id: messageId, text: 'Looking in your notes…' })
+      await answerQuestion(chatId, row.text)
+    }
+    return
+  }
+
+  // "Change kind": show every kind the owner can pick
+  const menu = data.match(/^km:([0-9a-f-]{36})$/)
+  if (menu) {
+    const { data: row } = await db.from('thoughts').select('id, kind')
+      .eq('id', menu[1]).eq('user_id', OWNER_USER_ID).maybeSingle()
+    await telegram('answerCallbackQuery', { callback_query_id: cb.id })
+    if (!row) return
+    const button = (k: string) => ({
+      text: `${k === row.kind ? '✅ ' : ''}${KIND_LABEL[k]}`,
+      callback_data: `k:${k}:${row.id}`,
+    })
+    await telegram('editMessageReplyMarkup', {
+      chat_id: chatId,
+      message_id: messageId,
+      reply_markup: {
+        inline_keyboard: [
+          PICKABLE.personal.map(button).map((b) => ({ ...b, text: `\u{1F9E0} ${b.text}` })),
+          PICKABLE.library.map(button).map((b) => ({ ...b, text: `\u{1F4DA} ${b.text}` })),
+        ],
+      },
+    })
+    return
+  }
+
+  // Set a kind (from the one-tap switch or the menu). The database logs the
+  // change in kind_changes (old, new, when).
+  const setKind = data.match(/^k:([a-z_]+):([0-9a-f-]{36})$/)
+  if (setKind) {
+    const [, kind, id] = setKind
+    if (![...PICKABLE.personal, ...PICKABLE.library].includes(kind)) {
+      await telegram('answerCallbackQuery', { callback_query_id: cb.id, text: 'Unknown kind.' })
+      return
+    }
+    const { data: before } = await db.from('thoughts').select('kind, takeaway_of')
+      .eq('id', id).eq('user_id', OWNER_USER_ID).maybeSingle()
+    if (!before) {
+      await telegram('answerCallbackQuery', { callback_query_id: cb.id, text: 'Thought not found.' })
+      return
+    }
+    if (before.kind === kind) {
+      await telegram('answerCallbackQuery', { callback_query_id: cb.id, text: `Already ${KIND_LABEL[kind]}.` })
+      return
+    }
+    const { error } = await db.from('thoughts').update({ kind, kind_set_by: 'manual' })
+      .eq('id', id).eq('user_id', OWNER_USER_ID)
+    if (error) {
+      await telegram('answerCallbackQuery', { callback_query_id: cb.id, text: `Could not change it: ${error.message}` })
+      return
+    }
+    await telegram('answerCallbackQuery', { callback_query_id: cb.id, text: `Now ${KIND_LABEL[kind]}` })
     await telegram('editMessageText', {
       chat_id: chatId,
       message_id: messageId,
-      text: resolution === 'saved' ? 'Saved to your brain' : 'Looking in your notes…',
+      text: savedText(kind).replace('Saved to', 'Moved to'),
+      reply_markup: { inline_keyboard: kindKeyboard(id, kind) },
     })
-    if (resolution === 'saved') {
-      await saveThought(row.text, row.message_id ?? undefined)
-    } else {
-      await answerQuestion(chatId, row.text)
+    // Newly in the Library: offer a takeaway, unless it already has one.
+    if (sectionOf(kind) === 'library' && sectionOf(before.kind) !== 'library') {
+      const { count } = await db.from('thoughts').select('id', { count: 'exact', head: true })
+        .eq('takeaway_of', id).eq('user_id', OWNER_USER_ID)
+      if (!count) await askTakeaway(chatId, id)
     }
+    return
+  }
+
+  // /takeaway picker: add a takeaway to this Library item
+  const pick = data.match(/^tk:([0-9a-f-]{36})$/)
+  if (pick) {
+    await telegram('answerCallbackQuery', { callback_query_id: cb.id })
+    await askTakeaway(chatId, pick[1])
+    return
+  }
+
+  // "Open the item" under a saved takeaway
+  const open = data.match(/^op:([0-9a-f-]{36})$/)
+  if (open) {
+    await telegram('answerCallbackQuery', { callback_query_id: cb.id })
+    await showThought(chatId, open[1].slice(0, 8))
     return
   }
 
@@ -316,11 +513,24 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   if (req.method !== 'POST') return ok()
 
-  // Admin: (re)register this function as the bot's webhook, with the secret
-  // token and the update types we handle. Needs the internal secret.
+  // Internal calls (need the internal secret):
+  //   {action: "ask_takeaway", thought_id} — enrich-thought saved a new Library
+  //     item: confirm its section and ask for a takeaway.
+  //   anything else — (re)register this function as the bot's webhook, with
+  //     the secret token and the update types we handle.
   if (req.headers.get(INTERNAL_HEADER)) {
     const denied = rejectUnlessInternal(req)
     if (denied) return denied
+    const body = await req.json().catch(() => ({}))
+    if (body?.action === 'ask_takeaway' && typeof body.thought_id === 'string') {
+      if (!OWNER_CHAT_ID || !OWNER_USER_ID) return new Response('owner not configured', { status: 500 })
+      const { data: row } = await db.from('thoughts').select('id, kind, content, summary')
+        .eq('id', body.thought_id).eq('user_id', OWNER_USER_ID).maybeSingle()
+      if (!row) return new Response(JSON.stringify({ ok: false, error: 'not found' }), { status: 404 })
+      await reply(OWNER_CHAT_ID, `${savedText(row.kind)}: ${titleOf(row)}`, kindKeyboard(row.id, row.kind))
+      await askTakeaway(OWNER_CHAT_ID, row.id)
+      return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+    }
     if (!WEBHOOK_SECRET) return new Response('TELEGRAM_WEBHOOK_SECRET is not set', { status: 500 })
     const result = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`, {
       method: 'POST',
@@ -388,6 +598,24 @@ Deno.serve(async (req) => {
       return ok()
     }
 
+    // A reply to a "What's your takeaway?" question is that takeaway.
+    const repliedTo = msg.reply_to_message?.message_id
+    if (repliedTo) {
+      const { data: prompt } = await db
+        .from('telegram_prompts')
+        .select('id, thought_id')
+        .eq('chat_id', String(chatId))
+        .eq('message_id', repliedTo)
+        .eq('purpose', 'takeaway')
+        .maybeSingle()
+      if (prompt?.thought_id) {
+        await saveTakeaway(chatId, prompt.thought_id, text, msg.message_id)
+        await db.from('telegram_prompts').update({ resolved_at: new Date().toISOString() })
+          .eq('id', prompt.id).is('resolved_at', null)
+        return ok()
+      }
+    }
+
     // Commands look like "/search cats" or "/search@mybot cats"
     const match = text.match(/^\/(\w+)(?:@\w+)?(?:\s+([\s\S]*))?$/)
     const command = match?.[1]?.toLowerCase()
@@ -412,7 +640,7 @@ Deno.serve(async (req) => {
     if (command === 'recent') {
       const { data, error } = await db
         .from('thoughts')
-        .select('content, created_at')
+        .select('content, created_at, kind')
         .eq('user_id', OWNER_USER_ID)
         .order('created_at', { ascending: false })
         .limit(5)
@@ -426,18 +654,48 @@ Deno.serve(async (req) => {
       return ok()
     }
 
-    if (command === 'search') {
+    // /search = both sections (each result labelled), /me = Personal, /lib = Library
+    if (command === 'search' || command === 'me' || command === 'lib') {
+      const section = command === 'me' ? 'personal' : command === 'lib' ? 'library' : null
+      const where = section ? ` in ${SECTION_LABEL[section]}` : ''
       if (!argument) {
-        await reply(chatId, 'Tell me what to look for, like: /search coffee')
+        await reply(chatId, `Tell me what to look for, like: /${command} coffee`)
         return ok()
       }
-      const data = await searchBrain(argument)
+      const data = await searchBrain(argument, section)
       await reply(
         chatId,
         data && data.length
-          ? `Found in your brain for "${argument}":\n\n` + formatList(data)
-          : `Nothing found for "${argument}".`,
+          ? `Found${where} for "${argument}":\n\n` + formatList(data)
+          : `Nothing found${where} for "${argument}".`,
       )
+      return ok()
+    }
+
+    // /takeaway words: pick a Library item, then reply with your takeaway.
+    // /takeaway alone: your latest Library items without a takeaway.
+    if (command === 'takeaway') {
+      let items: ListRow[]
+      if (argument) {
+        items = await searchBrain(argument, 'library')
+      } else {
+        const { data: withTakeaway } = await db.from('thoughts').select('takeaway_of')
+          .eq('user_id', OWNER_USER_ID).not('takeaway_of', 'is', null)
+        const done = new Set((withTakeaway ?? []).map((r) => r.takeaway_of))
+        const { data, error } = await db.from('thoughts').select('id, content, created_at, kind, summary')
+          .eq('user_id', OWNER_USER_ID).eq('section', 'library')
+          .order('created_at', { ascending: false }).limit(20)
+        if (error) throw error
+        items = (data ?? []).filter((r) => !done.has(r.id)).slice(0, 5)
+      }
+      if (!items.length) {
+        await reply(chatId, argument ? `No Library item matches "${argument}".` : 'Every Library item already has a takeaway.')
+        return ok()
+      }
+      await reply(chatId, 'Which item is your takeaway for?', items.filter((r) => r.id).map((r) => [{
+        text: titleOf(r).slice(0, 60),
+        callback_data: `tk:${r.id}`,
+      }]))
       return ok()
     }
 
@@ -475,8 +733,8 @@ Deno.serve(async (req) => {
     }
 
     // Anything else: save it as a new thought that belongs to the owner.
-    await saveThought(text, msg.message_id)
-    await reply(chatId, 'Saved to your brain')
+    // The confirmation names the section, with a one-tap switch.
+    await confirmSaved(chatId, await saveThought(text, msg.message_id))
     return ok()
   } catch (err) {
     console.error('telegram-bot error:', err)

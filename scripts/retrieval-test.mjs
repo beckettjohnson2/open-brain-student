@@ -87,10 +87,10 @@ async function callTool(key, name, toolArgs) {
 
 async function search(key, query) {
   const text = await callTool(key, "search_thoughts", { query });
-  // Each result: "[created_at] (id: <uuid>)\n<content>", separated by ---
+  // Each result: "[created_at] (id: <uuid>) · <section label>\n<content>", separated by ---
   return text.split("\n\n---\n\n").map((block) => {
     const id = block.match(/\(id: ([0-9a-f-]{36})\)/i)?.[1] ?? "";
-    const content = block.replace(/^\[[^\]]*\] \(id: [^)]*\)\n/, "");
+    const content = block.replace(/^\[[^\]]*\] \(id: [^)]*\)[^\n]*\n/, "");
     return { id, content };
   }).filter((r) => r.id);
 }
