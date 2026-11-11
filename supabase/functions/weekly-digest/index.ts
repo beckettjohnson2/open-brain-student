@@ -56,8 +56,11 @@ Deno.serve(async (_req) => {
       return reply({ ok: false, error: error.message }, 500);
     }
 
-    // Don't summarise old digests inside new digests
-    const thoughts = (data ?? []).filter((t) => t.category !== "digest");
+    // Don't summarise old digests inside new digests, and leave out the
+    // course build prompts (kind = course_setup) — they aren't your thinking.
+    const thoughts = (data ?? []).filter(
+      (t) => t.category !== "digest" && t.kind !== "course_setup" && t.kind !== "report",
+    );
 
     // 2. Not enough to say anything useful? Stop here.
     if (thoughts.length < MIN_THOUGHTS) {

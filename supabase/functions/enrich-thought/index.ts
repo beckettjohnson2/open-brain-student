@@ -14,6 +14,12 @@
 //   BACKFILL — the backfill script: embeds thoughts with no embedded_at yet.
 //              Never calls the AI tagger, so it costs nothing.
 //   RELINK   — rebuilds links for one page of thoughts (after a threshold change)
+//   CLASSIFY — scripts/backfill-kind.ps1: sets `kind` on thoughts that have
+//              none. Simple rules first; a short Haiku call only when the
+//              rules can't decide. Never touches tags.
+//
+// New thoughts get `kind` here too: rules first, and if the rules can't
+// decide, "kind" is added to the same tagging call (no extra AI call).
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
@@ -50,6 +56,128 @@ Rules:
 - tags: 3 to 5 short lowercase tags (1-3 words each) about the topic
 - category: exactly one of: ${CATEGORIES.join(", ")}
 - summary: one sentence, under 30 words, plain language`;
+
+// =====================================================================
+// KIND — what sort of thing a thought is
+// =====================================================================
+// my_thought, project_doc and class_note are the owner's own writing;
+// source is someone else's (videos, articles); course_setup is the build
+// prompts (left out of search and digests); report is AI-written summaries.
+const KINDS = ["my_thought", "source", "course_setup", "project_doc", "class_note", "report"];
+
+const KIND_GUIDE = `- my_thought: the owner's own personal thought, idea, goal, feeling or reflection
+- project_doc: a longer document the owner wrote about themselves, a project, or their plans
+- class_note: notes, assignments, essays or lab material for a class the owner is taking
+- source: content made by someone else that the owner saved (video transcript, article, web page, outside PDF)
+- course_setup: instructions or prompts for building this note-taking app itself
+- report: an AI-written summary, digest or research write-up`;
+
+type KindInput = {
+  content?: string | null;
+  category?: string | null;
+  metadata?: Record<string, unknown> | null;
+};
+
+// Free, instant rules. Returns null when the rules can't tell.
+function kindByRules(t: KindInput): string | null {
+  const content = (t.content ?? "").trim();
+  const source = typeof t.metadata?.source === "string" ? t.metadata.source : "";
+
+  if (t.category === "digest" || /^Weekly digest:/i.test(content)) return "report";
+  if (/^(Level \d+ on how I made this brain|The overview for this brain)/i.test(content)) return "course_setup";
+  if (source === "url" || source === "youtube") return "source";
+  if (/^(\u{1F4F9} YouTube:|\u{1F517} URL:)/u.test(content)) return "source";
+  if (/^https?:\/\/\S+$/.test(content)) return "source";          // a bare link
+  if (/^\u{1F3A4} Voice:/u.test(content)) return "my_thought";    // the owner speaking
+  if (source === "telegram") return "my_thought";
+  if (content.length <= 600 && !/^\u{1F4C4} PDF:/u.test(content)) return "my_thought";
+  return null; // PDFs and long unlabelled writing: ask the AI
+}
+
+function parseKind(text: string): string | null {
+  const match = text.match(/\{[\s\S]*\}/);
+  if (match) {
+    try {
+      const raw = JSON.parse(match[0]);
+      const kind = typeof raw.kind === "string" ? raw.kind.trim().toLowerCase() : "";
+      if (KINDS.includes(kind)) return kind;
+    } catch { /* fall through */ }
+  }
+  // Not clean JSON: accept a reply that names exactly one kind.
+  const named = KINDS.filter((k) => new RegExp(`\\b${k}\\b`, "i").test(text));
+  return named.length === 1 ? named[0] : null;
+}
+
+// Save kind on its own, so a problem here can never undo tagging.
+async function saveKind(supabase: SupabaseClient, id: string, kind: string, setBy: "rule" | "llm") {
+  const { error } = await supabase.from("thoughts").update({ kind, kind_set_by: setBy }).eq("id", id);
+  if (error) console.log(`could not save kind for ${id}: ${error.message}`);
+  return !error;
+}
+
+// One short Haiku call through call-llm, for the backfill.
+async function kindByLlm(
+  t: KindInput & { id: string; user_id?: string | null },
+  supabaseUrl: string,
+  serviceKey: string,
+): Promise<string | null> {
+  const res = await fetch(`${supabaseUrl}/functions/v1/call-llm`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${serviceKey}` },
+    body: JSON.stringify({
+      systemPrompt:
+        `You sort notes in one person's personal knowledge base by who wrote them and what they are.\n` +
+        `Reply with ONLY a JSON object like {"kind": "my_thought"}. kind is exactly one of:\n${KIND_GUIDE}`,
+      prompt: `Note (may be cut short):\n"""\n${(t.content ?? "").slice(0, 3000)}\n"""`,
+      // Room for Haiku's built-in thinking; the answer itself is a few tokens.
+      maxTokens: 1024,
+      userId: t.user_id ?? undefined,
+      source: "classify-kind",
+    }),
+  });
+  if (!res.ok) throw new Error(`call-llm failed (${res.status}): ${await res.text()}`);
+  const { text } = await res.json();
+  return parseKind(String(text ?? ""));
+}
+
+// CLASSIFY: give a kind to the next few thoughts that have none.
+async function classify(supabase: SupabaseClient, batchSize: number, supabaseUrl: string, serviceKey: string) {
+  const { data, error } = await supabase
+    .from("thoughts")
+    .select("id, content, category, metadata, user_id")
+    .is("kind", null)
+    .order("created_at", { ascending: true })
+    .limit(batchSize);
+  if (error) throw new Error(error.message);
+
+  const results: string[] = [];
+  let failed = 0;
+  for (const t of data ?? []) {
+    try {
+      let kind = kindByRules(t);
+      let setBy: "rule" | "llm" = "rule";
+      if (!kind) {
+        kind = await kindByLlm(t, supabaseUrl, serviceKey);
+        setBy = "llm";
+      }
+      if (!kind) {
+        failed++;
+        results.push(`failed ${t.id}: the AI gave no valid kind`);
+        continue;
+      }
+      if (!(await saveKind(supabase, t.id, kind, setBy))) throw new Error("save failed");
+      const preview = (t.content ?? "").replace(/\s+/g, " ").slice(0, 50);
+      results.push(`${kind.padEnd(12)} (${setBy})  ${preview}`);
+    } catch (e) {
+      failed++;
+      results.push(`failed ${t.id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+
+  const { count } = await supabase
+    .from("thoughts").select("id", { count: "exact", head: true }).is("kind", null);
+  return { ok: true, processed: results, failed, remaining: count ?? 0 };
+}
 
 function ok(message: string) {
   // Webhook functions always answer 200, even when they skip or fail.
@@ -325,12 +453,22 @@ Deno.serve(async (req) => {
     if (payload?.type === "RELINK") {
       return reply(await relink(createClient(supabaseUrl, serviceKey), Math.max(0, Number(payload.page) || 0)));
     }
+    if (payload?.type === "CLASSIFY") {
+      const size = Math.min(10, Math.max(1, Number(payload.batch) || 5));
+      return reply(await classify(createClient(supabaseUrl, serviceKey), size, supabaseUrl, serviceKey));
+    }
 
     if (payload?.type !== "INSERT" || !record?.id) {
       return ok("Not an insert with a record — nothing to do");
     }
 
-    const tagged = await tagThought(record, supabaseUrl, serviceKey);
+    // Kind: rules first. If they can't decide, the tagging call below is
+    // asked for it as well, so it costs nothing extra.
+    const ruleKind = record.kind ? null : kindByRules(record);
+    if (ruleKind) await saveKind(createClient(supabaseUrl, serviceKey), record.id, ruleKind, "rule");
+
+    const tagged = await tagThought(record, supabaseUrl, serviceKey, !record.kind && !ruleKind);
+    if (tagged.kind) await saveKind(createClient(supabaseUrl, serviceKey), record.id, tagged.kind, "llm");
 
     // Embedding runs for every new thought, tagged or not, in the
     // background after we've answered the webhook. A long capture's chunks
@@ -365,7 +503,8 @@ async function tagThought(
   record: any,
   supabaseUrl: string,
   serviceKey: string,
-): Promise<{ message: string; tags?: string[]; category?: string | null; summary?: string | null }> {
+  wantKind = false,
+): Promise<{ message: string; tags?: string[]; category?: string | null; summary?: string | null; kind?: string | null }> {
   try {
     // Already has a category (for example, a weekly digest) — leave it alone.
     if (record.category || record.enriched_at) {
@@ -386,7 +525,9 @@ async function tagThought(
         "Authorization": `Bearer ${serviceKey}`,
       },
       body: JSON.stringify({
-        systemPrompt: SYSTEM_PROMPT,
+        systemPrompt: wantKind
+          ? `${SYSTEM_PROMPT}\n- also add "kind": exactly one of:\n${KIND_GUIDE}`
+          : SYSTEM_PROMPT,
         prompt: `Note:\n"""\n${content.slice(0, MAX_CHARS)}\n"""`,
         maxTokens: 1024,
         userId: record.user_id,      // bill this call to the thought's owner
@@ -409,7 +550,8 @@ async function tagThought(
 
     if (error) return { message: `Could not save enrichment for ${record.id}: ${error.message}` };
 
-    return { message: `Enriched ${record.id}: [${category}] ${tags.join(", ")}`, tags, category, summary };
+    const kind = wantKind ? parseKind(text) : null;
+    return { message: `Enriched ${record.id}: [${category}${kind ? `, ${kind}` : ""}] ${tags.join(", ")}`, tags, category, summary, kind };
   } catch (e) {
     return { message: `enrich-thought error: ${e instanceof Error ? e.message : String(e)}` };
   }
