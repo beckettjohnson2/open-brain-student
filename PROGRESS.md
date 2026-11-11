@@ -2,6 +2,14 @@
 
 _Last updated: November 11, 2026_
 
+> **Nov 11 (late): Security re-check, no changes needed.** Without the right
+> secret, call-llm, enrich-thought, weekly-digest, telegram-bot, the MCP server,
+> search-brain and capture-url all return 401. With it, everything works (save →
+> enrich, Ask, digest, call-llm). 0 thoughts without an owner. Only 2 thoughts
+> lack tags ("Mathew 5:27-32", "Delete that"), both too short to tag. The only
+> key in git (current files and history) is the public anon key in `config.js`,
+> so there's nothing to rotate. Working rules for Claude are now in `CLAUDE.md`.
+>
 > **Nov 11 (evening): Content quality.** 4 link-only thoughts now hold their
 > transcript/article/PDF (same ids); 3 YouTube search links wait for you in Telegram.
 > Junk review, goal proposals and source reliability are live. See "Waiting on you".
@@ -52,7 +60,7 @@ _Last updated: November 11, 2026_
 - `node scripts/backup.mjs`: back up before any schema change.
 - `powershell -ExecutionPolicy Bypass -File scripts\backfill.ps1`: embed anything not yet embedded (free).
 - `powershell -ExecutionPolicy Bypass -File scripts\backfill-kind.ps1`: classify anything with no kind (rules, then Haiku).
-- `powershell -ExecutionPolicy Bypass -File scriptsackfill-tags.ps1`: tag and summarize anything saved without tags (Haiku, skips course_setup). `-Preview 5` shows 5 without saving.
+- `powershell -ExecutionPolicy Bypass -File scripts\backfill-tags.ps1`: tag and summarize anything saved without tags (Haiku, skips course_setup). `-Preview 5` shows 5 without saving.
 - `node scripts/retrieval-test.mjs`: rerun after every change and compare with `tests/retrieval-history.csv`.
 - All scripts read `INTERNAL_SECRET` from `.env`. If you ever lose `.env`: in the SQL Editor run `select decrypted_secret from vault.decrypted_secrets where name = 'internal_secret';` and put `INTERNAL_SECRET=<that>` in `.env`.
 
@@ -77,6 +85,7 @@ _Last updated: November 11, 2026_
 | Nov 11 | After Sections | 10/10 | 10/10 | 4/5 (A4 variable; see Known issues) |
 | Nov 11 | Before content quality | 10/10 | 10/10 | 5/5 |
 | Nov 11 | After content quality | 9/10 | 10/10 | 5/5 (#7 rank 3 → 4; see Known issues) |
+| Nov 11 | Security re-check (no backfill needed) | 9/10 | 10/10 | 5/5 |
 
 The pre-filled cases are easy (everything already ranks in the top 3), so they mostly catch regressions. Add harder ones: a vague phrasing, or a detail buried deep in a long video.
 
@@ -94,7 +103,7 @@ The pre-filled cases are easy (everything already ranks in the top 3), so they m
 ## Waiting on you (Telegram)
 
 1. **3 YouTube search links**: Veritasium "The Science of Thinking", Ray Dalio "How The Economic Machine Works", Julian Treasure "How to Speak So That People Want to Listen". Reply to each bot message with the real video link and its transcript is attached to the original thought.
-2. **2 junk candidates**: "Hello, this is my first thought from Telegram" and "/ search speaking confidently". Tap Archive or Keep.
+2. **2 junk candidates**: "Hello, this is my first thought from Telegram" and "/ search speaking confidently". Tap Archive or Keep. "Delete that" (saved Nov 11) looks like junk too. Archive it if you agree.
 3. **20 goal proposals**, one at a time. Tap Track or Not a goal. `/goals` shows what you track and resumes the questions.
 
 ## How to test content quality on your phone

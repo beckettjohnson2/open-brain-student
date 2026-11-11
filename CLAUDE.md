@@ -5,6 +5,17 @@ single-file web app on Vercel (`index.html`), a Telegram bot, and an MCP
 server for Claude Desktop / ChatGPT. Read `PROGRESS.md` first for what's
 built and what's next.
 
+## How to work with me (autonomy rules)
+- Work on your own as much as possible. Don't ask me about routine steps: reading files, writing code, running tests, deploying edge functions, running the retrieval test, committing.
+- Batch your questions. Check in only at these checkpoints, with one short message: "Here's what I did, here's what I'm about to do, OK to go ahead?"
+  1. Before any database schema change (after the backup is done)
+  2. Before anything that costs more than $0.25 in AI calls in one go
+  3. Before deleting or overwriting anything, or rotating keys or secrets
+  4. Before git push (that deploys to Vercel)
+  5. When you need me to do something only I can do (dashboard clicks, pasting a secret, testing on my phone)
+- If something fails, try to fix it yourself up to 3 times before asking me. Then explain the problem in plain words and give me 2 options.
+- At the end of each session, give me a short summary: what's done, what to test on my phone (step by step), what's next.
+
 ## Rules
 
 1. **Reuse the existing architecture.** Supabase, edge functions, `call-llm`,
