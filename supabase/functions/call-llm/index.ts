@@ -217,5 +217,10 @@ Deno.serve(async (req) => {
     completionTokens: result.completionTokens,
   });
 
-  return json({ text: result.text });
+  // usage and model are extra fields; callers that only read `text` are unaffected.
+  return json({
+    text: result.text,
+    model,
+    usage: { prompt_tokens: result.promptTokens, completion_tokens: result.completionTokens },
+  });
 });

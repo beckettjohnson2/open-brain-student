@@ -12,6 +12,7 @@
  
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
+import { askBrain, renderAnswer } from "../_shared/ask.ts";
 
 // ---------------------------------------------------------------------
 // 1. SETUP — read settings that Supabase provides to the function
@@ -69,6 +70,26 @@ function json(body: unknown, status = 200): Response {
 // When the AI asks "tools/list", it gets this list. The descriptions
 // matter: they are how the AI decides when to use each tool.
 const TOOLS = [
+  {
+    name: "ask_brain",
+    description:
+      "Answer a question from the user's Open Brain in plain language, with " +
+      "numbered citations to the exact thoughts it used (ids included). " +
+      "Weights the user's own writing above videos and articles they saved, " +
+      "says so when an answer comes only from a saved source, and replies " +
+      "'Nothing in your brain on this' (with the 3 closest thoughts) instead " +
+      "of guessing. Best for questions like 'what did I decide about X and " +
+      "why', 'what have I saved about X', 'when did I last think about X', " +
+      "and 'what's changed in how I think about X'. Use search_thoughts " +
+      "instead when you want the raw matching notes.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        question: { type: "string", description: "The question, in plain words" },
+      },
+      required: ["question"],
+    },
+  },
   {
     name: "search_thoughts",
     description:
@@ -252,8 +273,28 @@ async function relatedThoughts(args: Record<string, unknown>): Promise<string> {
     .join("\n\n---\n\n");
 }
 
+// ask_brain: the same answer function the Telegram bot uses. No follow-up
+// memory here — the AI app keeps its own conversation.
+async function askBrainTool(args: Record<string, unknown>): Promise<string> {
+  const question = String(args.question ?? "").trim();
+  if (!question) throw new Error("Please provide a question.");
+  if (!OWNER_USER_ID) throw new Error("Server is missing the OWNER_USER_ID secret.");
+  const res = await askBrain({
+    db: supabase,
+    supabaseUrl: SUPABASE_URL,
+    serviceKey: SUPABASE_SERVICE_ROLE_KEY,
+    userId: OWNER_USER_ID,
+    question,
+    channel: "mcp",
+    chatId: "mcp",
+    useHistory: false,
+  });
+  return renderAnswer(res, "mcp");
+}
+
 // Look up which function to run for each tool name.
 const TOOL_HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<string>> = {
+  ask_brain: askBrainTool,
   search_thoughts: searchThoughts,
   related_thoughts: relatedThoughts,
   list_recent: listRecent,

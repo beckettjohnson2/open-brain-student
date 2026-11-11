@@ -1,0 +1,88 @@
+# Retrieval test - 10 questions and the thought each one should find.
+#
+# Pre-filled by Claude on Nov 10 from your real notes - change any of them.
+#
+# Fill in each slot:
+#   Q:      a question, typed the way you'd really ask it
+#   EXPECT: the thought it should find - EITHER its id (the first 8
+#           characters are enough), OR a short phrase copied exactly from
+#           the START of that thought (upper/lower case doesn't matter).
+#
+# Example:
+#   Q: what did I say about fixing my sleep?
+#   EXPECT: I want to be able to fix my sleep schedule
+#
+# Empty slots are skipped. Lines starting with # are ignored.
+# Run:  node scripts/retrieval-test.mjs
+# Pick a mix: short notes, voice notes, class notes, and one detail buried
+# deep inside a long video or article.
+
+## 1
+Q: what do I want to do about my sleep schedule
+EXPECT: 462bae9c
+
+## 2
+Q: how much screen time do I want
+EXPECT: 45423ba2
+
+## 3
+Q: which metals are best for jewelry
+EXPECT: 68574d5e
+
+## 4
+Q: periodic trends in chemistry class
+EXPECT: 8b0baa32
+
+## 5
+Q: how does projectile motion work
+EXPECT: 95c4b7c5
+
+## 6
+Q: tips for passing a job interview
+EXPECT: 231be453
+
+## 7
+Q: what does an industrial engineer actually do
+EXPECT: a088513f
+
+## 8
+Q: someone told me being quiet holds me back
+EXPECT: 4b801fdb
+
+## 9
+Q: my essay on sodium benzoate
+EXPECT: 62720c92
+
+## 10
+Q: how long to rest between heavy duty workouts
+EXPECT: a767dfd4
+
+# ---------------------------------------------------------------------
+# Ask-my-brain cases: these go through the full answer path (ask_brain),
+# and pass when the answer CITES the expected thought. Same EXPECT rules.
+# Use ASK: instead of Q:. Each one makes one Haiku call (~$0.001).
+# Good ones to try: "what did I decide about X and why", "what have I
+# saved about X", "when did I last think about X", "what's changed in
+# how I think about X".
+# For a question your notes can't answer, write  EXPECT: NOTHING  -
+# it passes when the answer is "Nothing in your brain on this".
+
+## A1
+ASK: what have I saved about peptides?
+EXPECT: 48b1d5df
+
+## A2
+ASK: what do I want to be like a year from now?
+EXPECT: 0bf4a402
+
+## A3
+ASK: when did I last think about my bed and sleep habits?
+EXPECT: 321f03c2
+
+## A4
+ASK: what did I decide about investing and why?
+EXPECT: 57fc73e5
+
+## A5
+ASK: what is my favorite pizza topping?
+EXPECT: NOTHING
