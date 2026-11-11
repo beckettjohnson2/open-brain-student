@@ -1,7 +1,14 @@
 # Progress
 
-_Last updated: November 11, 2026_
+_Last updated: November 11, 2026 (night)_
 
+> **Nov 11 (night): Content quality check-up.** All six content-quality pieces
+> were already live. The 3 YouTube search links now hold their transcripts
+> (Veritasium "The Science of Thinking", Ray Dalio "How The Economic Machine
+> Works", Julian Treasure's TED talk), same ids, with the search link kept in
+> `metadata.original_content`. Both junk messages are archived. Retrieval
+> unchanged (9/10, 10/10, 5/5).
+>
 > **Nov 11 (late): Security re-check, no changes needed.** Without the right
 > secret, call-llm, enrich-thought, weekly-digest, telegram-bot, the MCP server,
 > search-brain and capture-url all return 401. With it, everything works (save →
@@ -72,7 +79,6 @@ _Last updated: November 11, 2026_
 - Your "About Me" profile is a `project_doc`, so it sits in Library. If you think of it as about you, move it to Personal with one tap.
 - A takeaway counts only if you *reply* to the bot's question. A plain next message is saved as a normal thought.
 - "Mathew 5:27-32" is too short to tag, so it stays untagged.
-- `/ search x` (with a space after the slash) is saved as a thought instead of searched.
 - The Telegram bot can't receive voice notes (it would need a paid transcription service). Dictate with your keyboard's mic key instead.
 - `?` used to mean search in Telegram; it now asks a question. Use `/search` for the plain list.
 
@@ -86,6 +92,7 @@ _Last updated: November 11, 2026_
 | Nov 11 | Before content quality | 10/10 | 10/10 | 5/5 |
 | Nov 11 | After content quality | 9/10 | 10/10 | 5/5 (#7 rank 3 → 4; see Known issues) |
 | Nov 11 | Security re-check (no backfill needed) | 9/10 | 10/10 | 5/5 |
+| Nov 11 | After filling the 3 YouTube search links | 9/10 | 10/10 | 5/5 |
 
 The pre-filled cases are easy (everything already ranks in the top 3), so they mostly catch regressions. Add harder ones: a vague phrasing, or a detail buried deep in a long video.
 
@@ -102,9 +109,9 @@ The pre-filled cases are easy (everything already ranks in the top 3), so they m
 
 ## Waiting on you (Telegram)
 
-1. **3 YouTube search links**: Veritasium "The Science of Thinking", Ray Dalio "How The Economic Machine Works", Julian Treasure "How to Speak So That People Want to Listen". Reply to each bot message with the real video link and its transcript is attached to the original thought.
-2. **2 junk candidates**: "Hello, this is my first thought from Telegram" and "/ search speaking confidently". Tap Archive or Keep. "Delete that" (saved Nov 11) looks like junk too. Archive it if you agree.
-3. **20 goal proposals**, one at a time. Tap Track or Not a goal. `/goals` shows what you track and resumes the questions.
+1. **Old "paste the video link" messages**: all 3 videos are filled now. Ignore those bot messages (replying would only re-read the same video).
+2. **2 leftovers to hide**: "Delete that" and "Look up the videos and find the link and transcripts and add them". The second was a request to the bot, saved as a thought and labelled a source. To archive both (hidden, not deleted), run in the SQL Editor: `update thoughts set status = 'archived' where id in ('8544b68e-9116-48f4-853c-6a104f388764', '6933dc17-7686-4c12-848b-1190ae52ea9d');`
+3. **20 goal proposals**, one at a time. The first one hasn't been answered yet. Tap Track or Not a goal. `/goals` shows what you track and resumes the questions.
 
 ## How to test content quality on your phone
 
