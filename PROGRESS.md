@@ -1,6 +1,20 @@
 # Progress
 
-_Last updated: November 11, 2026 (night)_
+_Last updated: November 11, 2026 (late night)_
+
+> **Nov 11 (late night): Goals clean-up, reliable chunking, goals in Ask.**
+> `/mygoals` reviews tracked goals one at a time (Keep / Pause / Drop; only the
+> status changes). You now track 5 and dropped 11. Chunking (splitting long
+> videos and documents into searchable pieces) stalled because each call held
+> up to 5 pieces in memory and saved them together, so a call cut off by
+> Supabase's ~2-second computing limit lost them all, and the hand-off to the
+> next call was fire-and-forget. Now every piece is saved (with its progress)
+> the moment it's ready, at most 3 per call, the hand-off is confirmed, and a
+> 15-minute job (`resume-chunking`) restarts anything unfinished and messages
+> you in Telegram after 3 checks with no progress. The stuck Veritasium video
+> is complete (11/11). Tested: Dalio transcript 23/23 in ~20 s, Paul Graham
+> essay 60/60 in ~55 s, no errors. "About me" questions in Ask now include your
+> tracked goals. Retrieval unchanged (9/10, 10/10, 5/5).
 
 > **Nov 11 (night): Content quality check-up.** All six content-quality pieces
 > were already live. The 3 YouTube search links now hold their transcripts
@@ -60,7 +74,10 @@ _Last updated: November 11, 2026 (night)_
 | **Goals** (Nov 11) | Proposed from your voice notes in your own words, sent one at a time with **Track / Not a goal**. Only Track creates a goal | `/goals` |
 | **Digests rank lower** (Nov 11) | Weekly digests and AI write-ups count half in every search; Ask cites the original notes instead of a digest | Automatic |
 | **Class recaps** (Nov 11) | `/recap Chem 113: what we covered` saves a class note tagged with the class and asks one follow-up question; reply to it and your answer is saved too. `/recap Chem 113` alone asks you for the summary | Telegram |
-| **Web app sections** (Nov 11) | All / Personal / Library filters on Recent; each card shows its section and has a kind picker | Recent tab, after the push |
+| **Web app sections** (Nov 11) | All / Personal / Library filters on Recent; each card shows its section and has a kind picker | Recent tab |
+| **Goal review** (Nov 11) | `/mygoals` shows each tracked goal with **Keep / Pause / Drop**, one at a time. Pause and Drop only change its status (nothing deleted); only active goals count in `/goals` and Ask | `/mygoals` |
+| **Goals in Ask** (Nov 11) | "About me" questions (what are my goals, what do I think about…) add the notes behind your active goals, marked as tracked; goal questions list them first, cited | `? what are my goals` |
+| **Reliable chunking** (Nov 11) | Long thoughts are chunked in small resumable steps (max 3 chunks per call, each saved with its progress in `chunk_progress`). Every 15 minutes `resume-chunking` restarts anything unfinished; after 3 checks with no progress you get a Telegram message (once) | `select * from chunk_progress where done_at is null;` |
 
 ## Maintenance scripts
 
@@ -68,13 +85,15 @@ _Last updated: November 11, 2026 (night)_
 - `powershell -ExecutionPolicy Bypass -File scripts\backfill.ps1`: embed anything not yet embedded (free).
 - `powershell -ExecutionPolicy Bypass -File scripts\backfill-kind.ps1`: classify anything with no kind (rules, then Haiku).
 - `powershell -ExecutionPolicy Bypass -File scripts\backfill-tags.ps1`: tag and summarize anything saved without tags (Haiku, skips course_setup). `-Preview 5` shows 5 without saving.
+- `node scripts/chunking.mjs`: resume unfinished chunking now (what the 15-minute job does). `node scripts/chunking.mjs <id>` continues one thought; add `--redo` to rebuild its chunks from 0, in place (free).
 - `node scripts/retrieval-test.mjs`: rerun after every change and compare with `tests/retrieval-history.csv`.
 - All scripts read `INTERNAL_SECRET` from `.env`. If you ever lose `.env`: in the SQL Editor run `select decrypted_secret from vault.decrypted_secrets where name = 'internal_secret';` and put `INTERNAL_SECRET=<that>` in `.env`.
 
 ## Known issues
 
 - Long documents can crowd generic questions: after the Paul Graham essay got its 67,000 characters, test #7 ("what does an industrial engineer actually do") slipped from rank 3 to 4 because the essay matches common words. Still top 10.
-- 20 goal proposals is a lot; some overlap ("Break bad habits", "Better myself"). Tap Not a goal freely.
+- "What are my goals" lists your 5 tracked goals first, then goals mentioned in other notes ("Beyond those…"), which can include ones you dropped. They're still in your notes, just not tracked.
+- If a thought's text is ever replaced by a shorter one, chunks past the new end stay (chunks are never deleted). Doesn't happen today: only bare links get refilled, and they had no chunks.
 - Retrieval test A4 ("what did I decide about investing") is variable. Answers draw on several relevant notes and don't always cite the expected voice note. The answer itself is correct and cited.
 - Your "About Me" profile is a `project_doc`, so it sits in Library. If you think of it as about you, move it to Personal with one tap.
 - A takeaway counts only if you *reply* to the bot's question. A plain next message is saved as a normal thought.
@@ -93,6 +112,7 @@ _Last updated: November 11, 2026 (night)_
 | Nov 11 | After content quality | 9/10 | 10/10 | 5/5 (#7 rank 3 → 4; see Known issues) |
 | Nov 11 | Security re-check (no backfill needed) | 9/10 | 10/10 | 5/5 |
 | Nov 11 | After filling the 3 YouTube search links | 9/10 | 10/10 | 5/5 |
+| Nov 11 | Reliable chunking + goals in Ask | 9/10 | 10/10 | 5/5 |
 
 The pre-filled cases are easy (everything already ranks in the top 3), so they mostly catch regressions. Add harder ones: a vague phrasing, or a detail buried deep in a long video.
 
@@ -110,7 +130,14 @@ The pre-filled cases are easy (everything already ranks in the top 3), so they m
 ## Waiting on you (Telegram)
 
 1. **Old "paste the video link" messages**: all 3 videos are filled now. Ignore those bot messages (replying would only re-read the same video).
-2. **20 goal proposals**, one at a time. The first one hasn't been answered yet. Tap Track or Not a goal. `/goals` shows what you track and resumes the questions.
+2. **Goals**: done. 5 active, 11 dropped (`/mygoals` to change).
+
+## How to test goals and chunking on your phone
+
+1. Send `/mygoals`. You should see your first active goal with Keep / Pause / Drop. Tap **Keep** on each; at the end: "Active: 5, paused: 0, dropped: 11".
+2. Send `? what are my goals`. The 5 tracked goals come first, each cited.
+3. Send a long YouTube video link (20+ minutes). A minute later, `/search` a detail from the middle of the video; it should be found.
+4. Nothing else to do for chunking. If a long thought ever gets stuck, you'll get "⚠️ Chunking is stuck on …" in Telegram.
 
 ## How to test content quality on your phone
 
@@ -127,7 +154,7 @@ The pre-filled cases are easy (everything already ranks in the top 3), so they m
 3. Send a normal note. The reply should say "🧠 Saved to Personal (my thought)" with buttons. Tap **Move to Library**: it changes, and the bot asks for a takeaway (ignore it).
 4. Send `/me sleep`, then `/lib sleep`. Personal-only and Library-only results.
 5. Send `/takeaway`. You should see your Library items without a takeaway.
-6. After the GitHub push: the web app's Recent tab has All / Personal / Library, and a kind picker on each card.
+6. The web app's Recent tab has All / Personal / Library, and a kind picker on each card.
 
 ## What's next
 

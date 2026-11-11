@@ -91,6 +91,7 @@ type Row = {
   status?: string | null;
   takeaway_of?: string | null;
   reliability?: string | null;
+  goals?: string[];   // tracked goals (status active) that came from this note
 };
 
 export type AskOptions = {
@@ -306,6 +307,24 @@ async function takeawaysFor(o: AskOptions, items: Row[]): Promise<Row[]> {
   })) as Row[];
 }
 
+// "About me" questions: the owner's tracked goals (only status 'active', i.e.
+// tapped Track and not paused/dropped in /mygoals). Each goal comes from a
+// note, so the note is added and marked; the answer cites the note.
+async function withTrackedGoals(o: AskOptions, rows: Row[], section: SectionFilter | null): Promise<Row[]> {
+  const { data, error } = await o.db.from("goals").select("text, source_thought_id")
+    .eq("user_id", o.userId).eq("status", "active").not("source_thought_id", "is", null)
+    .order("confirmed_at");
+  if (error || !data?.length) return rows;
+  const goalsOf = new Map<string, string[]>();
+  for (const g of data) goalsOf.set(g.source_thought_id, [...(goalsOf.get(g.source_thought_id) ?? []), g.text]);
+  const have = new Set(rows.map((r) => r.id));
+  const extra = (await fetchByIds(o, [...goalsOf.keys()].filter((id) => !have.has(id))))
+    .filter((r) => r.status !== "archived" && (!section || sectionOf(r.kind) === section));
+  return rows.concat(extra).map((r) => (goalsOf.has(r.id) ? { ...r, goals: goalsOf.get(r.id) } : r));
+}
+
+const ASKS_ABOUT_GOALS = /\b(goals?|aims?|aspirations?|plans?|priorities|working (on|toward)|trying to)\b/i;
+
 function rerank(rows: Row[], intent: Intent): Row[] {
   const weighted = rows.map((r) => {
     let w = r.score ?? 0;
@@ -340,7 +359,7 @@ Use the earlier conversation to resolve words like "it", "that", "the second one
 Reply with ONLY the query, one line, no quotes.`;
 
 const INTENT_HINTS: Record<Intent, string> = {
-  about_me: "The owner asks about themselves. Answer from PERSONAL items first; use LIBRARY items only for context, clearly as things they saved.",
+  about_me: "The owner asks about themselves. Answer from PERSONAL items first; use LIBRARY items only for context, clearly as things they saved. An item marked TRACKED GOAL is a note behind a goal they confirmed they are tracking: when the question is about their goals or plans, name every tracked goal first (cite its note), then anything else relevant.",
   decision: "The owner asks what they decided and why. Lead with the decision, then the reasons they gave, each cited. If no decision was written down, say so.",
   saved: "The owner asks what they have saved. List what the saved items cover, grouped, each cited. Library items are the point here.",
   last_time: "The owner asks when they last thought about this. The notes are in date order, oldest first. Give the date of the most recent relevant note first, then what it said.",
@@ -377,7 +396,8 @@ function buildContext(rows: Row[]): string {
   return rows.map((r, i) => {
     const section = sectionOf(r.kind);
     const about = r.takeaway_of && numberOf.has(r.takeaway_of) ? ` on [${numberOf.get(r.takeaway_of)}]` : "";
-    return `[${i + 1}] ${section ? SECTION_LABEL[section].toUpperCase() : "UNSORTED"} · ${fmtDate(r.created_at)} · ${sourceLabel(r)}${about}` +
+    const goal = r.goals?.length ? ` · TRACKED GOAL: ${r.goals.map((g) => `"${g}"`).join(", ")}` : "";
+    return `[${i + 1}] ${section ? SECTION_LABEL[section].toUpperCase() : "UNSORTED"} · ${fmtDate(r.created_at)} · ${sourceLabel(r)}${about}${goal}` +
       (r.summary ? ` · ${r.summary.replace(/\s+/g, " ").trim()}` : "") +
       `\n${snippet(r)}`;
   }).join("\n\n");
@@ -459,7 +479,14 @@ export async function askBrain(o: AskOptions): Promise<AskResult> {
   if (sectionFilter !== "library") rows = rows.concat(await takeawaysFor(o, rows));
   if (sectionFilter) rows = rows.filter((r) => sectionOf(r.kind) === sectionFilter);
   rows = rows.filter((r) => r.status !== "archived");
-  rows = rerank(dedupe(await addReliability(o, rows)), intent);
+  rows = dedupe(rows);
+  // 3b. About me: add the tracked goals (marked on the notes they came from).
+  if (intent === "about_me" && sectionFilter !== "library") rows = await withTrackedGoals(o, rows, sectionFilter);
+  rows = rerank(await addReliability(o, rows), intent);
+  // A question about goals: the tracked ones lead.
+  if (intent === "about_me" && ASKS_ABOUT_GOALS.test(question)) {
+    rows = [...rows.filter((r) => r.goals?.length), ...rows.filter((r) => !r.goals?.length)];
+  }
 
   const save = async (fields: Partial<Record<string, unknown>>): Promise<string | null> => {
     const { data, error } = await o.db.from("ask_turns").insert({

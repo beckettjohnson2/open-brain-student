@@ -57,7 +57,7 @@ built and what's next.
    in the existing `telegram-bot` function. `handleCallback` routes by a
    `callback_data` prefix (`fb:` feedback, `sv:`/`an:` Save it/Answer it,
    `k:<kind>:<id>` set kind, `km:` kind menu, `tk:` pick takeaway item,
-   `op:` open item). Add new buttons there, and keep `callback_data` under
+   `op:` open item, `gt:`/`gn:` goal proposals, `mg:k|p|d:` /mygoals review). Add new buttons there, and keep `callback_data` under
    64 bytes.
 10. **Never delete thoughts. Sections are derived from kind.** Personal =
    `my_thought`, `class_note`, `report`; Library = `source`, `project_doc`;
@@ -91,10 +91,12 @@ built and what's next.
   another link.
 - **Bot prompts** (`telegram_prompts.purpose`): `takeaway`, `replace_link`,
   `recap`, `recap_answer`. Internal bot actions: `ask_takeaway`, `fix_link`,
-  `review_junk`, `propose_goals`. Anything starting with `/` is a command
+  `review_junk`, `propose_goals`, `notify` (plain text to the owner). Anything starting with `/` is a command
   and is never saved.
 - **Goals:** `goal_candidates` (proposals from voice notes) → `goals`
   (status active) only via the Track button (`gt:`/`gn:` callbacks).
+  `/mygoals` sets status active/paused/dropped (never deletes). Ask adds the
+  source notes of active goals to "about me" questions.
 - **Sections:** `thoughts.section` is a generated column =
   `section_of(kind)`. After changing `section_of()`, refresh with
   `update thoughts set kind = kind;`. Every kind change is logged in
@@ -118,7 +120,14 @@ built and what's next.
   Tables: `ask_turns` (memory, cost, citations; `/new` sets `cleared_at`),
   `answer_feedback`, `telegram_pending`. View: `ask_quality`. Redeploy BOTH
   `telegram-bot` and `open-brain-mcp` after changing `_shared/`.
-- **Cron:** `keep-brain-awake` (Sun and Wed 09:00 UTC), `weekly-brain-digest` (Sun 15:00 UTC).
+- **Cron:** `keep-brain-awake` (Sun and Wed 09:00 UTC), `weekly-brain-digest` (Sun 15:00 UTC),
+  `resume-chunking` (every 15 min → enrich-thought `RESUME`).
+- **Chunking:** at most `CHUNKS_PER_CALL` (3) chunks per call, each saved with
+  its progress in `chunk_progress` (next_index/total, last_error, stalls).
+  CONTINUE replies at once and works after the reply. RESUME restarts every
+  thought with `embedded_at` null; after 3 checks with no progress it sends a
+  Telegram `notify` once. `RECHUNK {id}` rebuilds one thought's chunks in
+  place. Helper: `node scripts/chunking.mjs [id] [--redo]`.
 - **Owner:** functions using the service key must filter by `OWNER_USER_ID`
   themselves; row-level security doesn't apply to them.
 - **Deploy:** `npx supabase functions deploy <name> --no-verify-jwt` for
