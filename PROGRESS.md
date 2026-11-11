@@ -2,9 +2,9 @@
 
 _Last updated: November 10, 2026_
 
-> **Not live yet:** everything marked Nov 9 and Nov 10 is written and tested
-> offline, but waits for the two migrations and the deploys in
-> "Go-live steps" below.
+> **Live since Nov 10:** both migrations are applied, all functions are deployed,
+> and all 54 thoughts have a kind. Still to do: put the MCP password in `.env` and
+> run the retrieval test, plus the phone test below.
 
 ## What's built
 
