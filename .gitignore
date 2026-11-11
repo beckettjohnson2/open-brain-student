@@ -5,3 +5,4 @@ node_modules/
 supabase/.temp/
 backups/
 .claude/settings.local.json
+.vscode/
