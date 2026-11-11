@@ -10,6 +10,7 @@
 // secrets at runtime, so this file is safe to push to GitHub.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { rejectUnlessInternal } from "../_shared/internal-auth.ts";
 
 // ---------- Prices (USD per 1 million tokens) ----------
 // Used only to estimate cost for your llm_usage receipts.
@@ -175,6 +176,10 @@ function json(body: unknown, status = 200) {
 
 Deno.serve(async (req) => {
   if (req.method !== "POST") return json({ error: "Use POST" }, 405);
+
+  // Only our own system may spend AI credit.
+  const denied = rejectUnlessInternal(req);
+  if (denied) return denied;
 
   let body: Record<string, unknown>;
   try {

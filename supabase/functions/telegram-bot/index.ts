@@ -15,6 +15,7 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { askBrain, clearHistory, renderAnswer } from '../_shared/ask.ts'
+import { INTERNAL_HEADER, rejectUnlessInternal, safeEqual } from '../_shared/internal-auth.ts'
 
 // Secrets. The first three are ones you added; the SUPABASE_ ones are
 // provided automatically by Supabase.
@@ -23,6 +24,10 @@ const OWNER_USER_ID = Deno.env.get('OWNER_USER_ID') ?? ''
 const OWNER_CHAT_ID = (Deno.env.get('TELEGRAM_CHAT_ID') ?? '').trim()
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+// Telegram sends this back in X-Telegram-Bot-Api-Secret-Token on every
+// update, because we registered it with setWebhook. Anything without it
+// didn't come from Telegram.
+const WEBHOOK_SECRET = (Deno.env.get('TELEGRAM_WEBHOOK_SECRET') ?? '').trim()
 
 const corsHeaders = {
   'Access-Control-Allow-Origin': '*',
@@ -310,6 +315,40 @@ async function handleCallback(cb: any): Promise<void> {
 Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response('ok', { headers: corsHeaders })
   if (req.method !== 'POST') return ok()
+
+  // Admin: (re)register this function as the bot's webhook, with the secret
+  // token and the update types we handle. Needs the internal secret.
+  if (req.headers.get(INTERNAL_HEADER)) {
+    const denied = rejectUnlessInternal(req)
+    if (denied) return denied
+    if (!WEBHOOK_SECRET) return new Response('TELEGRAM_WEBHOOK_SECRET is not set', { status: 500 })
+    const result = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/setWebhook`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        url: `${SUPABASE_URL}/functions/v1/telegram-bot`,
+        secret_token: WEBHOOK_SECRET,
+        allowed_updates: ['message', 'callback_query'],
+      }),
+    }).then((r) => r.json())
+    const info = await fetch(`https://api.telegram.org/bot${BOT_TOKEN}/getWebhookInfo`).then((r) => r.json())
+    // Never echo the token or secret back.
+    const w = info?.result ?? {}
+    return new Response(JSON.stringify({
+      setWebhook: result?.ok === true, description: result?.description,
+      url: w.url, allowed_updates: w.allowed_updates, pending_update_count: w.pending_update_count,
+      last_error_message: w.last_error_message ?? null,
+    }), { status: 200, headers: { 'Content-Type': 'application/json' } })
+  }
+
+  // Only Telegram knows the secret token. Fails closed if it isn't set.
+  const telegramToken = (req.headers.get('X-Telegram-Bot-Api-Secret-Token') ?? '').trim()
+  if (!WEBHOOK_SECRET || !telegramToken || !safeEqual(telegramToken, WEBHOOK_SECRET)) {
+    return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+      status: 401,
+      headers: { ...corsHeaders, 'Content-Type': 'application/json' },
+    })
+  }
 
   let chatId: number | undefined
 

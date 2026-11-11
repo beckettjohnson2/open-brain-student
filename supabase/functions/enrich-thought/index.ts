@@ -23,6 +23,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { internalHeaders, rejectUnlessInternal } from "../_shared/internal-auth.ts";
 
 const CATEGORIES = ["idea", "learning", "question", "reference", "plan", "reflection"];
 const MIN_LENGTH = 20;        // skip tiny notes like "test" or "ok"
@@ -123,7 +124,7 @@ async function kindByLlm(
 ): Promise<string | null> {
   const res = await fetch(`${supabaseUrl}/functions/v1/call-llm`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", "Authorization": `Bearer ${serviceKey}` },
+    headers: internalHeaders(),
     body: JSON.stringify({
       systemPrompt:
         `You sort notes in one person's personal knowledge base by who wrote them and what they are.\n` +
@@ -347,7 +348,7 @@ async function continueLater(thoughtId: string) {
   const url = `${Deno.env.get("SUPABASE_URL")}/functions/v1/enrich-thought`;
   const call = fetch(url, {
     method: "POST",
-    headers: { "content-type": "application/json" },
+    headers: internalHeaders(),
     body: JSON.stringify({ type: "CONTINUE", id: thoughtId }),
   }).catch((e) => console.log(`continue failed for ${thoughtId}: ${e}`));
   await Promise.race([call, new Promise((r) => setTimeout(r, 1500))]);
@@ -435,7 +436,61 @@ async function relink(supabase: SupabaseClient, page: number) {
   return { ok: true, page, thoughts: data?.length ?? 0, links, more: (data?.length ?? 0) === PAGE };
 }
 
+// RETAG: tag older thoughts that were saved before auto-tagging existed
+// (enriched_at is empty), skipping course_setup. After tagging, the main
+// embedding is rebuilt from the new summary + tags and links are refreshed,
+// so search benefits. Chunks are unchanged. Pages through by created_at so a
+// thought that is too short to tag is never retried forever.
+async function retag(
+  supabase: SupabaseClient,
+  o: { size: number; after: string | null; dryRun: boolean; supabaseUrl: string; serviceKey: string },
+) {
+  let q = supabase
+    .from("thoughts")
+    .select("id, content, user_id, tags, category, summary, kind, enriched_at, created_at")
+    .is("enriched_at", null)
+    .or("kind.is.null,kind.neq.course_setup")
+    .order("created_at", { ascending: true })
+    .limit(o.size);
+  if (o.after) q = q.gt("created_at", o.after);
+  const { data, error } = await q;
+  if (error) throw new Error(error.message);
+
+  const results: unknown[] = [];
+  let failed = 0;
+  for (const row of data ?? []) {
+    const t = await tagThought(row, o.supabaseUrl, o.serviceKey, false, o.dryRun);
+    const preview = (row.content ?? "").replace(/\s+/g, " ").slice(0, 60);
+    if (!t.tags) {
+      if (!/too short/.test(t.message)) failed++;
+      results.push({ id: row.id, preview, skipped: t.message });
+      continue;
+    }
+    if (!o.dryRun) {
+      // Re-embed with the new summary and tags, then refresh links.
+      const fresh: Row = { ...row, tags: t.tags, category: t.category ?? null, summary: t.summary ?? null };
+      const { error: e } = await supabase.from("thoughts").update({ embedding: await embed(mainText(fresh)) }).eq("id", row.id);
+      if (e) throw new Error(`re-embed: ${e.message}`);
+      await linkThought(supabase, fresh);
+    }
+    results.push({ id: row.id, preview, category: t.category, tags: t.tags, summary: t.summary });
+  }
+
+  const last = data?.at(-1)?.created_at ?? o.after;
+  let remainingQ = supabase
+    .from("thoughts").select("id", { count: "exact", head: true })
+    .is("enriched_at", null).or("kind.is.null,kind.neq.course_setup");
+  if (last) remainingQ = remainingQ.gt("created_at", last);
+  const { count } = await remainingQ;
+  return { ok: true, dryRun: o.dryRun, results, failed, after: last, remaining: count ?? 0 };
+}
+
 Deno.serve(async (req) => {
+  // Only our own system: the database trigger, the backfill scripts, and
+  // this function calling itself. Anyone else gets a 401.
+  const denied = rejectUnlessInternal(req);
+  if (denied) return denied;
+
   try {
     const payload = await req.json();
     const record = payload?.record;
@@ -452,6 +507,16 @@ Deno.serve(async (req) => {
     }
     if (payload?.type === "RELINK") {
       return reply(await relink(createClient(supabaseUrl, serviceKey), Math.max(0, Number(payload.page) || 0)));
+    }
+    if (payload?.type === "RETAG") {
+      const size = Math.min(10, Math.max(1, Number(payload.batch) || 3));
+      return reply(await retag(createClient(supabaseUrl, serviceKey), {
+        size,
+        after: typeof payload.after === "string" ? payload.after : null,
+        dryRun: payload.dryRun === true,
+        supabaseUrl,
+        serviceKey,
+      }));
     }
     if (payload?.type === "CLASSIFY") {
       const size = Math.min(10, Math.max(1, Number(payload.batch) || 5));
@@ -504,6 +569,7 @@ async function tagThought(
   supabaseUrl: string,
   serviceKey: string,
   wantKind = false,
+  dryRun = false,   // RETAG preview: ask the AI, but save nothing
 ): Promise<{ message: string; tags?: string[]; category?: string | null; summary?: string | null; kind?: string | null }> {
   try {
     // Already has a category (for example, a weekly digest) — leave it alone.
@@ -517,13 +583,10 @@ async function tagThought(
     }
 
     // Call YOUR gateway — never the AI provider directly.
-    // The Authorization header is required, or call-llm turns us away with a 401.
+    // The x-internal-secret header is required, or call-llm turns us away with a 401.
     const llmRes = await fetch(`${supabaseUrl}/functions/v1/call-llm`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${serviceKey}`,
-      },
+      headers: internalHeaders(),
       body: JSON.stringify({
         systemPrompt: wantKind
           ? `${SYSTEM_PROMPT}\n- also add "kind": exactly one of:\n${KIND_GUIDE}`
@@ -541,6 +604,7 @@ async function tagThought(
 
     const { text } = await llmRes.json();
     const { tags, category, summary } = parseEnrichment(text);
+    if (dryRun) return { message: `Preview ${record.id}`, tags, category, summary };
 
     const supabase = createClient(supabaseUrl, serviceKey);
     const { error } = await supabase

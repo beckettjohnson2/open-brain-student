@@ -21,11 +21,24 @@ param([int]$Batch = 5)
 
 $url = "https://ypcluqihozisgtkloqtn.supabase.co/functions/v1/enrich-thought"
 
+# The internal secret, from .env (git-ignored) - every call needs it.
+function Get-InternalSecret {
+  $envFile = Join-Path (Split-Path $PSScriptRoot -Parent) ".env"
+  if ($env:INTERNAL_SECRET) { return $env:INTERNAL_SECRET.Trim() }
+  if (Test-Path $envFile) {
+    $line = Get-Content $envFile | Where-Object { $_ -match '^INTERNAL_SECRET=' } | Select-Object -First 1
+    if ($line) { return $line.Substring(16).Trim().Trim('"') }
+  }
+  Write-Host "INTERNAL_SECRET not found. Add a line INTERNAL_SECRET=... to the .env file in the project folder."
+  exit 1
+}
+$headers = @{ "x-internal-secret" = (Get-InternalSecret) }
+
 $failRounds = 0
 do {
   $body = @{ type = "CLASSIFY"; batch = $Batch } | ConvertTo-Json
   try {
-    $r = Invoke-RestMethod -Method Post -Uri $url -ContentType "application/json" -Body $body -TimeoutSec 150
+    $r = Invoke-RestMethod -Method Post -Uri $url -Headers $headers -ContentType "application/json" -Body $body -TimeoutSec 150
   } catch {
     Write-Host "  Call failed ($($_.Exception.Message)) - waiting and trying again"
     $failRounds++

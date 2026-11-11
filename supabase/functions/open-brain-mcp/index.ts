@@ -207,7 +207,7 @@ async function searchThoughts(args: Record<string, unknown>): Promise<string> {
 
   // Old keyword search: "ilike" ignores upper/lower case.
   const words = query.split(/\s+/).filter(Boolean).slice(0, 5);
-  let request = supabase.from("thoughts").select("id, content, created_at");
+  let request = supabase.from("thoughts").select("id, content, created_at").eq("user_id", OWNER_USER_ID);
   for (const word of words) {
     request = request.ilike("content", `%${word}%`);
   }
@@ -228,6 +228,7 @@ async function listRecent(args: Record<string, unknown>): Promise<string> {
   const { data, error } = await supabase
     .from("thoughts")
     .select("id, content, created_at")
+    .eq("user_id", OWNER_USER_ID)
     .order("created_at", { ascending: false })
     .limit(limit);
  
@@ -239,10 +240,12 @@ async function listRecent(args: Record<string, unknown>): Promise<string> {
 async function addThought(args: Record<string, unknown>): Promise<string> {
   const content = String(args.content ?? "").trim();
   if (!content) throw new Error("Cannot save an empty thought.");
+  // Never save a thought without an owner: it would be invisible everywhere.
+  if (!OWNER_USER_ID) throw new Error("Server is missing the OWNER_USER_ID secret, so nothing was saved.");
  
   const { data, error } = await supabase
     .from("thoughts")
-    .insert(OWNER_USER_ID ? { content, user_id: OWNER_USER_ID } : { content })
+    .insert({ content, user_id: OWNER_USER_ID, metadata: { source: "mcp" } })
     .select("id, content, created_at")
     .single();
 

@@ -3,6 +3,7 @@
 // Every AI call goes through YOUR gateway (call-llm), never a provider directly.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { internalHeaders, rejectUnlessInternal } from "../_shared/internal-auth.ts";
 
 const DAYS = 7;
 const MIN_THOUGHTS = 5;
@@ -35,7 +36,11 @@ function fmt(d: Date) {
   return d.toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
-Deno.serve(async (_req) => {
+Deno.serve(async (req) => {
+  // Only pg_cron (or you, with the secret) may start a digest — it spends AI credit.
+  const denied = rejectUnlessInternal(req);
+  if (denied) return denied;
+
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -70,7 +75,9 @@ Deno.serve(async (_req) => {
     }
 
     // Who to bill the AI call to, and who owns the digest
-    const userId = thoughts.find((t) => t.user_id)?.user_id ?? null;
+    // Falls back to the owner so a digest is never saved without one.
+    const userId = thoughts.find((t) => t.user_id)?.user_id ?? (Deno.env.get("OWNER_USER_ID") || null);
+    if (!userId) return reply({ ok: false, error: "No owner for this digest (OWNER_USER_ID is not set)." }, 500);
 
     // 3. Group by category
     const groups: Record<string, typeof thoughts> = {};
@@ -94,13 +101,10 @@ Deno.serve(async (_req) => {
     }
     notes = notes.slice(0, MAX_TOTAL_CHARS);
 
-    // 4. Ask the AI — through YOUR gateway, with the Authorization header
+    // 4. Ask the AI — through YOUR gateway, with the internal secret
     const llmRes = await fetch(`${supabaseUrl}/functions/v1/call-llm`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${serviceKey}`,
-      },
+      headers: internalHeaders(),
       body: JSON.stringify({
         systemPrompt: SYSTEM_PROMPT,
         prompt: `Here are my notes from ${fmt(since)} to ${fmt(now)}, grouped by category:\n${notes}`,

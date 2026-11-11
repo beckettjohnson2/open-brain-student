@@ -20,6 +20,7 @@
 // PRICES in call-llm/index.ts.
 
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
+import { internalHeaders } from "./internal-auth.ts";
 
 export const ANSWER_MODEL = "claude-haiku-5-5";
 const REWRITE_MODEL = "claude-haiku-5-5";
@@ -158,7 +159,7 @@ async function callLlm(
 ): Promise<{ text: string; promptTokens: number; completionTokens: number }> {
   const res = await fetch(`${o.supabaseUrl}/functions/v1/call-llm`, {
     method: "POST",
-    headers: { "Content-Type": "application/json", Authorization: `Bearer ${o.serviceKey}` },
+    headers: internalHeaders(),
     body: JSON.stringify({ ...body, userId: o.userId }),
   });
   if (!res.ok) throw new Error(`call-llm failed (${res.status}): ${await res.text()}`);
