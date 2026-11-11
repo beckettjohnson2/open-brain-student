@@ -943,6 +943,12 @@ Deno.serve(async (req) => {
       return jsonReply({ ok: true, id: row.id, url, result })
     }
 
+    // A plain message to the owner from our own jobs (e.g. "chunking is stuck").
+    if (body?.action === 'notify' && typeof body.text === 'string' && body.text.trim()) {
+      await reply(OWNER_CHAT_ID, body.text.slice(0, 3500))
+      return jsonReply({ ok: true })
+    }
+
     // List junk candidates in Telegram, each with Archive / Keep.
     if (body?.action === 'review_junk') {
       const junk = await findJunk()

@@ -41,6 +41,12 @@ const CHUNK_OVERLAP = 50;        // words shared with the previous chunk
 // each call works for about 1 second, then hands the rest of a long thought
 // to a fresh call of this same function ("CONTINUE").
 const WORK_MS = 1000;
+// Hard cap per call, so a cold start (loading the model also uses computing)
+// plus the chunks still fits in the allowance. Progress is saved per chunk.
+const CHUNKS_PER_CALL = 3;
+// RESUME (pg_cron, every 15 min): after this many checks in a row with no
+// progress on a thought, tell the owner in Telegram (once).
+const STUCK_AFTER = 3;
 
 // --- Graph settings -----------------------------------------------------
 // gte-small scores run high (on this brain the 80 closest pairs all scored
@@ -260,37 +266,67 @@ async function linkThought(supabase: SupabaseClient, row: Row): Promise<number> 
   return links.length;
 }
 
-// Embed chunks until the deadline, picking up where a previous call
-// stopped. Always makes at least one chunk of progress. Returns true when
-// every chunk is done.
+// Where to start: the progress row if it matches this content's chunk
+// count, otherwise the first chunk index that isn't saved yet (not a plain
+// count, so a gap left by an interrupted run is filled, not skipped).
+async function chunkStart(supabase: SupabaseClient, id: string, total: number): Promise<number> {
+  const { data: progress } = await supabase
+    .from("chunk_progress").select("next_index, total_chunks").eq("thought_id", id).maybeSingle();
+  if (progress && progress.total_chunks === total) return Math.min(progress.next_index, total);
+  const { data, error } = await supabase
+    .from("thought_chunks").select("chunk_index").eq("thought_id", id);
+  if (error) throw new Error(`thought_chunks read: ${error.message}`);
+  const have = new Set((data ?? []).map((c: { chunk_index: number }) => c.chunk_index));
+  let i = 0;
+  while (i < total && have.has(i)) i++;
+  return i;
+}
+
+async function saveProgress(supabase: SupabaseClient, row: Row, fields: Record<string, unknown>) {
+  const { error } = await supabase.from("chunk_progress").upsert({
+    thought_id: row.id,
+    user_id: row.user_id,
+    updated_at: new Date().toISOString(),
+    ...fields,
+  }, { onConflict: "thought_id" });
+  if (error) console.log(`chunk_progress ${row.id}: ${error.message}`);
+}
+
+// Embed chunks, picking up where a previous call stopped. Small, resumable
+// steps: at most CHUNKS_PER_CALL chunks per call, and each chunk is saved
+// (and progress recorded) the moment it's embedded, so a call that gets cut
+// off loses at most one chunk of work. Returns true when every chunk is done.
 async function embedChunks(supabase: SupabaseClient, row: Row, deadline: number): Promise<boolean> {
   const chunks = chunkText(row.content ?? "");
   if (chunks.length === 0) return true;
 
-  const { count, error } = await supabase
-    .from("thought_chunks")
-    .select("id", { count: "exact", head: true })
-    .eq("thought_id", row.id);
-  if (error) throw new Error(`thought_chunks count: ${error.message}`);
-
-  let next = count ?? 0;
-  while (next < chunks.length) {
-    const batch = [];
-    while (next < chunks.length && batch.length < 5 && (batch.length === 0 || Date.now() < deadline)) {
-      batch.push({
+  let next = await chunkStart(supabase, row.id, chunks.length);
+  let doneThisCall = 0;
+  await saveProgress(supabase, row, { total_chunks: chunks.length, next_index: next });
+  try {
+    while (next < chunks.length && doneThisCall < CHUNKS_PER_CALL && (doneThisCall === 0 || Date.now() < deadline)) {
+      const { error } = await supabase.from("thought_chunks").upsert({
         thought_id: row.id,
         chunk_index: next,
         content: chunks[next],
         embedding: await embed(chunks[next]),
         user_id: row.user_id,
-      });
+      }, { onConflict: "thought_id,chunk_index" });
+      if (error) throw new Error(`thought_chunks save: ${error.message}`);
       next++;
+      doneThisCall++;
+      await saveProgress(supabase, row, {
+        total_chunks: chunks.length,
+        next_index: next,
+        last_progress_at: new Date().toISOString(),
+        last_error: null,
+        stalls: 0,
+        ...(next >= chunks.length ? { done_at: new Date().toISOString() } : {}),
+      });
     }
-    const { error: insertError } = await supabase
-      .from("thought_chunks")
-      .upsert(batch, { onConflict: "thought_id,chunk_index", ignoreDuplicates: true });
-    if (insertError) throw new Error(`thought_chunks insert: ${insertError.message}`);
-    if (Date.now() >= deadline) break;
+  } catch (e) {
+    await saveProgress(supabase, row, { last_error: e instanceof Error ? e.message : String(e) });
+    throw e;
   }
   return next >= chunks.length;
 }
@@ -323,23 +359,35 @@ async function embedThought(
 
 // Hand the rest of a long thought to a fresh call of this function, which
 // gets its own computing allowance. We don't wait for it to finish.
-async function continueLater(thoughtId: string) {
+// The CONTINUE call answers at once (the work runs after its reply), so we
+// wait for that reply: then we know the hand-off arrived. If it doesn't, the
+// 15-minute RESUME job picks the thought up anyway.
+async function continueLater(thoughtId: string): Promise<boolean> {
   const url = `${Deno.env.get("SUPABASE_URL")}/functions/v1/enrich-thought`;
-  const call = fetch(url, {
-    method: "POST",
-    headers: internalHeaders(),
-    body: JSON.stringify({ type: "CONTINUE", id: thoughtId }),
-  }).catch((e) => console.log(`continue failed for ${thoughtId}: ${e}`));
-  await Promise.race([call, new Promise((r) => setTimeout(r, 1500))]);
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      headers: internalHeaders(),
+      body: JSON.stringify({ type: "CONTINUE", id: thoughtId }),
+      signal: AbortSignal.timeout(8000),
+    });
+    await res.body?.cancel();
+    return res.ok;
+  } catch (e) {
+    console.log(`continue hand-off failed for ${thoughtId}: ${e}`);
+    return false;
+  }
 }
 
 const ROW_COLUMNS = "id, content, user_id, tags, category, summary";
 
 // CONTINUE: keep chunking one long thought, then chain again if needed.
+// Also does the main embedding if it's missing (RESUME sends every
+// unfinished thought here, not only half-chunked ones).
 async function continueThought(supabase: SupabaseClient, id: string) {
   const { data, error } = await supabase
     .from("thoughts")
-    .select(`${ROW_COLUMNS}, embedded_at`)
+    .select(`${ROW_COLUMNS}, embedded_at, has_embedding:embedding`)
     .eq("id", id)
     .maybeSingle();
   if (error) throw new Error(error.message);
@@ -347,10 +395,64 @@ async function continueThought(supabase: SupabaseClient, id: string) {
 
   const result = await embedThought(supabase, data as Row, {
     deadline: Date.now() + WORK_MS,
-    hasEmbedding: true,
+    hasEmbedding: data.has_embedding != null,
   });
   if (!result.done) await continueLater(id);
   return { ok: true, message: result.message };
+}
+
+// RESUME (pg_cron every 15 minutes): restart every unfinished thought.
+// A thought that made no progress for STUCK_AFTER checks in a row is
+// reported to the owner in Telegram, once; it keeps being retried.
+async function resume(supabase: SupabaseClient, supabaseUrl: string) {
+  const { data, error } = await supabase
+    .from("thoughts")
+    .select(ROW_COLUMNS)
+    .is("embedded_at", null)
+    .lt("created_at", new Date(Date.now() - 5 * 60_000).toISOString()) // not brand-new saves
+    .order("created_at")
+    .limit(10);
+  if (error) throw new Error(error.message);
+
+  const results: string[] = [];
+  for (const t of data ?? []) {
+    const row = t as Row;
+    const total = chunkText(row.content ?? "").length;
+    const { data: p } = await supabase.from("chunk_progress")
+      .select("next_index, total_chunks, stalls, last_seen_index, last_progress_at, last_error, notified_at")
+      .eq("thought_id", row.id).maybeSingle();
+
+    // Still being worked on right now: leave it alone.
+    if (p?.last_progress_at && Date.now() - Date.parse(p.last_progress_at) < 2 * 60_000) {
+      results.push(`${row.id}: busy`);
+      continue;
+    }
+    const next = p && p.total_chunks === total ? p.next_index : await chunkStart(supabase, row.id, total);
+    const stalls = p && p.last_seen_index === next ? p.stalls + 1 : 0;
+    await saveProgress(supabase, row, { total_chunks: total, next_index: next, last_seen_index: next, stalls });
+
+    if (stalls >= STUCK_AFTER && !p?.notified_at) {
+      const title = shortTitle(row);
+      const text = `⚠️ Chunking is stuck on "${title}" at ${next} of ${total} chunks, after ${stalls} tries ` +
+        `(15 minutes apart).${p?.last_error ? `\nLast error: ${p.last_error.slice(0, 200)}` : ""}\n\n` +
+        `It's still found by its summary; the rest of its text isn't searchable yet. I keep retrying.`;
+      const sent = await fetch(`${supabaseUrl}/functions/v1/telegram-bot`, {
+        method: "POST",
+        headers: internalHeaders(),
+        body: JSON.stringify({ action: "notify", text }),
+      }).then((r) => r.ok).catch(() => false);
+      if (sent) await saveProgress(supabase, row, { notified_at: new Date().toISOString() });
+    }
+    const handed = await continueLater(row.id);
+    results.push(`${row.id}: ${next}/${total}, stalls ${stalls}${handed ? "" : ", hand-off failed"}`);
+  }
+  return { ok: true, resumed: results };
+}
+
+function shortTitle(row: Row): string {
+  const first = (row.content ?? "").split("\n").find((l) => l.trim()) ?? "";
+  const s = (row.summary?.trim() || first).replace(/\s+/g, " ");
+  return s.length > 80 ? s.slice(0, 79) + "…" : s;
 }
 
 function reply(body: unknown) {
@@ -580,7 +682,35 @@ Deno.serve(async (req) => {
       return reply(await backfill(createClient(supabaseUrl, serviceKey), size));
     }
     if (payload?.type === "CONTINUE" && payload.id) {
-      return reply(await continueThought(createClient(supabaseUrl, serviceKey), String(payload.id)));
+      // Answer at once so the caller knows the hand-off arrived; the work
+      // runs after the reply.
+      const id = String(payload.id);
+      EdgeRuntime.waitUntil(
+        continueThought(createClient(supabaseUrl, serviceKey), id)
+          .then((r) => console.log(r.message))
+          .catch((e) => console.log(`continue failed for ${id}: ${e instanceof Error ? e.message : String(e)}`)),
+      );
+      return reply({ ok: true, queued: id });
+    }
+    // RECHUNK (tests / repairs): redo one thought's chunks from chunk 0,
+    // overwriting each in place (same thought_id + chunk_index). Nothing is
+    // deleted. Needs the chunk_progress table.
+    if (payload?.type === "RECHUNK" && payload.id) {
+      const supabase = createClient(supabaseUrl, serviceKey);
+      const id = String(payload.id);
+      const { data: t, error } = await supabase.from("thoughts").select(ROW_COLUMNS).eq("id", id).maybeSingle();
+      if (error || !t) return reply({ ok: false, error: error?.message ?? "not found" });
+      const { error: pErr } = await supabase.from("chunk_progress").upsert({
+        thought_id: id, user_id: t.user_id, total_chunks: chunkText(t.content ?? "").length, next_index: 0,
+        stalls: 0, last_seen_index: null, last_error: null, done_at: null, notified_at: null,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: "thought_id" });
+      if (pErr) return reply({ ok: false, error: `chunk_progress: ${pErr.message}` });
+      await supabase.from("thoughts").update({ embedded_at: null }).eq("id", id);
+      return reply({ ok: true, handedOff: await continueLater(id) });
+    }
+    if (payload?.type === "RESUME") {
+      return reply(await resume(createClient(supabaseUrl, serviceKey), supabaseUrl));
     }
     if (payload?.type === "RELINK") {
       return reply(await relink(createClient(supabaseUrl, serviceKey), Math.max(0, Number(payload.page) || 0)));
