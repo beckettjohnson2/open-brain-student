@@ -12,6 +12,9 @@
 // needs.
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import { extractText, getDocumentProxy } from 'npm:unpdf@0.12.1'
+import { INTERNAL_HEADER, rejectUnlessInternal } from '../_shared/internal-auth.ts'
+import { refillThought } from '../_shared/refill.ts'
 
 // All three are provided automatically by Supabase. You never add them.
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
@@ -266,19 +269,30 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Use POST.' }, 405)
 
   try {
-    // Who is asking? Read it from their login token. A user id sent in the
-    // request body is never trusted, because anyone could type anyone's id.
-    const token = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '').trim()
-    if (!token) throw new Problem(401, 'Sign in first.')
-    const asCaller = createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false } })
-    const { data: auth, error: authError } = await asCaller.auth.getUser(token)
-    const user = auth?.user
-    if (authError || !user) throw new Problem(401, 'Sign in first.')
-
-    let body: { url?: unknown } = {}
+    let body: { url?: unknown; thought_id?: unknown } = {}
     try {
       body = await req.json()
     } catch { /* an empty or broken body is handled as "no link" below */ }
+
+    // Refill mode (our own system only, e.g. the Telegram bot): fill an
+    // existing thought instead of saving a new one, keeping its id.
+    let refillId: string | null = null
+    let user: { id: string } | null = null
+    if (req.headers.get(INTERNAL_HEADER)) {
+      const denied = rejectUnlessInternal(req)
+      if (denied) return denied
+      if (typeof body.thought_id !== 'string') throw new Problem(400, 'thought_id is required in refill mode.')
+      refillId = body.thought_id
+    } else {
+      // Who is asking? Read it from their login token. A user id sent in the
+      // request body is never trusted, because anyone could type anyone's id.
+      const token = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '').trim()
+      if (!token) throw new Problem(401, 'Sign in first.')
+      const asCaller = createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false } })
+      const { data: auth, error: authError } = await asCaller.auth.getUser(token)
+      user = auth?.user ?? null
+      if (authError || !user) throw new Problem(401, 'Sign in first.')
+    }
     const url = checkUrl(typeof body.url === 'string' ? body.url : '')
 
     const { res, finalUrl } = await fetchPage(url)
@@ -288,21 +302,29 @@ Deno.serve(async (req) => {
     }
 
     const contentType = (res.headers.get('content-type') ?? '').toLowerCase()
-    if (contentType.includes('application/pdf')) {
-      await res.body?.cancel()
-      throw new Problem(422, 'That link is a PDF. Download it and use the PDF tab.')
-    }
+    const isPdf = contentType.includes('application/pdf') || /\.pdf$/i.test(finalUrl.pathname)
     const isHtml = contentType.includes('html')
     const isPlain = contentType.startsWith('text/plain')
-    if (contentType && !isHtml && !isPlain) {
+    if (contentType && !isHtml && !isPlain && !isPdf) {
       await res.body?.cancel()
       throw new Problem(422, 'That link is not a readable web page.')
     }
 
-    const raw = decodeBytes(await readLimited(res), contentType)
+    const bytes = await readLimited(res)
+    const raw = isPdf ? '' : decodeBytes(bytes, contentType)
     let title = ''
     let text = ''
-    if (isPlain) {
+    if (isPdf) {
+      // PDFs are read right here with unpdf (free, open source).
+      try {
+        const pdf = await getDocumentProxy(new Uint8Array(bytes))
+        const { text: pages } = await extractText(pdf, { mergePages: true })
+        text = String(pages ?? '').replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+        title = decodeURIComponent(finalUrl.pathname.split('/').pop() ?? '').replace(/\.pdf$/i, '')
+      } catch (e) {
+        throw new Problem(422, `Could not read that PDF: ${e instanceof Error ? e.message : String(e)}`)
+      }
+    } else if (isPlain) {
       text = raw.replace(/\r\n/g, '\n').trim()
     } else {
       title = pageTitle(raw)
@@ -323,12 +345,24 @@ Deno.serve(async (req) => {
     // rule, so user_id is set here by hand on every row.
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } })
     const link = finalUrl.href
-    const content = `\u{1F517} URL: ${title ? title + '\n' : ''}${link}\n\n${text}`
+    const content = `${isPdf ? '\u{1F4C4} PDF' : '\u{1F517} URL'}: ${title ? title + '\n' : ''}${link}\n\n${text}`
+
+    if (refillId) {
+      const done = await refillThought(admin, {
+        thoughtId: refillId,
+        content,
+        metadata: { source: 'url', title, url: link },
+        sourceText: text,
+        sourceKind: isPdf ? 'pdf' : 'web',
+        truncated,
+      })
+      return json({ ok: true, refilled: true, id: done.id, title, url: link, chars: text.length, truncated })
+    }
 
     const { data: thought, error: insertError } = await admin
       .from('thoughts')
       .insert({
-        user_id: user.id,
+        user_id: user!.id,
         content,
         metadata: { source: 'url', title, url: link },
       })
@@ -340,7 +374,7 @@ Deno.serve(async (req) => {
     // If this part fails the thought is already saved, so it only logs.
     const { error: sourceError } = await admin.from('thought_sources').insert({
       thought_id: thought.id,
-      user_id: user.id,
+      user_id: user!.id,
       source_text: text,
       source_kind: 'web',
       char_count: text.length,

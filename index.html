@@ -1273,8 +1273,10 @@
     if (!user) return;
     var list = $('recentList');
     try {
+      // Archived thoughts (status = 'archived') are hidden, never deleted.
       var query = db.from('thoughts')
-        .select('id, content, created_at, kind, section, takeaway_of');
+        .select('id, content, created_at, kind, section, takeaway_of')
+        .or('status.is.null,status.neq.archived');
       if (recentSection !== 'all') query = query.eq('section', recentSection);
       var result = await query
         .order('created_at', { ascending: false })

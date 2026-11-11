@@ -15,7 +15,8 @@
 import 'jsr:@supabase/functions-js/edge-runtime.d.ts'
 import { createClient } from 'npm:@supabase/supabase-js@2'
 import { askBrain, clearHistory, renderAnswer } from '../_shared/ask.ts'
-import { INTERNAL_HEADER, rejectUnlessInternal, safeEqual } from '../_shared/internal-auth.ts'
+import { INTERNAL_HEADER, internalHeaders, rejectUnlessInternal, safeEqual } from '../_shared/internal-auth.ts'
+import { MIN_REAL_CONTENT, refillThought } from '../_shared/refill.ts'
 import {
   DEFAULT_KIND, KIND_LABEL, kindByRules, PICKABLE, type Section, SECTION_LABEL, sectionOf,
 } from '../_shared/kinds.ts'
@@ -27,6 +28,9 @@ const OWNER_USER_ID = Deno.env.get('OWNER_USER_ID') ?? ''
 const OWNER_CHAT_ID = (Deno.env.get('TELEGRAM_CHAT_ID') ?? '').trim()
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
 const SERVICE_ROLE_KEY = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? ''
+// The capture functions sit behind Supabase's login check; the anon key
+// gets through that, and the internal secret proves it's us.
+const ANON_KEY = Deno.env.get('SUPABASE_ANON_KEY') ?? ''
 // Telegram sends this back in X-Telegram-Bot-Api-Secret-Token on every
 // update, because we registered it with setWebhook. Anything without it
 // didn't come from Telegram.
@@ -161,7 +165,10 @@ const HELP =
   '/me words: search only Personal (you and what you know)\n' +
   '/lib words: search only Library (things you found or made)\n' +
   '/takeaway words: add your takeaway to a Library item\n' +
-  '/recent to see your last 5 thoughts'
+  '/recap Class: summary, to save a class recap (I ask one follow-up question)\n' +
+  '/goals to see the goals you track\n' +
+  '/recent to see your last 5 thoughts\n\n' +
+  'Send a bare link and I read it (video transcript, article or PDF).'
 
 // ---------------------------------------------------------------------------
 // Ask my brain
@@ -250,6 +257,290 @@ function savedText(kind: string | null): string {
 async function confirmSaved(chatId: number | string, saved: SavedRow): Promise<void> {
   await reply(chatId, savedText(saved.kind), sectionOf(saved.kind) ? kindKeyboard(saved.id, saved.kind) : undefined)
   if (sectionOf(saved.kind) === 'library') await askTakeaway(chatId, saved.id)
+}
+
+// --- Reply-mode questions ------------------------------------------------------
+// A question sent in reply mode; replying to it is routed by `purpose`.
+async function askInReplyMode(
+  chatId: number | string,
+  text: string,
+  purpose: 'takeaway' | 'replace_link' | 'recap' | 'recap_answer',
+  thoughtId: string | null,
+  data: Record<string, unknown> = {},
+  placeholder = 'Type your reply',
+): Promise<void> {
+  const sent = await telegram('sendMessage', {
+    chat_id: chatId,
+    text,
+    disable_web_page_preview: true,
+    reply_markup: { force_reply: true, input_field_placeholder: placeholder },
+  }) as { message_id?: number } | null
+  if (!sent?.message_id) return
+  const { error } = await db.from('telegram_prompts').insert({
+    user_id: OWNER_USER_ID,
+    chat_id: String(chatId),
+    message_id: sent.message_id,
+    purpose,
+    thought_id: thoughtId,
+    data,
+  })
+  if (error) console.error('could not store prompt:', error.message)
+}
+
+// --- Links that read themselves ------------------------------------------------
+const BARE_LINK = /^https?:\/\/\S+$/i
+const YT_SEARCH = /youtube\.com\/results\?(?:[^ ]*&)?search_query=/i
+const YT_VIDEO = /(youtube\.com\/(watch\?|shorts\/|live\/)|youtu\.be\/)/i
+
+function searchTerms(url: string): string {
+  try {
+    return new URL(url).searchParams.get('search_query') ?? url
+  } catch {
+    return url
+  }
+}
+
+// Fill a saved thought from a link with the existing capture functions,
+// keeping the thought's id. Returns what was read, or why not.
+async function fillFromLink(thoughtId: string, url: string): Promise<{ ok: boolean; title?: string; chars?: number; error?: string }> {
+  const endpoint = YT_VIDEO.test(url) ? 'capture-youtube' : 'capture-url'
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/${endpoint}`, {
+      method: 'POST',
+      headers: internalHeaders({ Authorization: `Bearer ${ANON_KEY}`, apikey: ANON_KEY }),
+      body: JSON.stringify({ url, thought_id: thoughtId }),
+    })
+    const body = await res.json().catch(() => ({}))
+    if (!res.ok || !body.ok) return { ok: false, error: body.error ?? `HTTP ${res.status}` }
+    if ((body.chars ?? 0) < MIN_REAL_CONTENT) return { ok: false, title: body.title, error: 'too little text' }
+    return { ok: true, title: body.title, chars: body.chars }
+  } catch (e) {
+    return { ok: false, error: e instanceof Error ? e.message : String(e) }
+  }
+}
+
+const COULD_NOT_READ = "Saved the link but couldn't read it. Send me the text or a different link?"
+
+// Every bare link is read right away. If it ends up with no real content,
+// say so and wait for the text or a better link (reply mode).
+async function processLink(
+  chatId: number | string,
+  thoughtId: string,
+  url: string,
+  o: { quiet?: boolean } = {},
+): Promise<'filled' | 'needs_video_link' | 'unreadable'> {
+  if (YT_SEARCH.test(url)) {
+    await askInReplyMode(chatId,
+      `\u{1F50E} This is a YouTube search, not a video: "${searchTerms(url)}".\nReply with the actual video link and I'll attach its transcript.`,
+      'replace_link', thoughtId, { original: url }, 'Paste the video link')
+    return 'needs_video_link'
+  }
+  const filled = await fillFromLink(thoughtId, url)
+  if (!filled.ok) {
+    console.log(`could not read ${url}: ${filled.error}`)
+    await askInReplyMode(chatId, `${COULD_NOT_READ}\n(${shorten(url, 80)})`, 'replace_link', thoughtId,
+      { original: url }, 'Paste the text or another link')
+    return 'unreadable'
+  }
+  if (!o.quiet) {
+    const row: SavedRow = { id: thoughtId, kind: 'source', content: filled.title ?? url }
+    await reply(chatId, `\u{1F4DA} Saved to Library (saved source): ${filled.title ?? url}\n${filled.chars?.toLocaleString()} characters read.`,
+      kindKeyboard(thoughtId, 'source'))
+    await askTakeaway(chatId, row.id)
+  }
+  return 'filled'
+}
+
+// A reply to "send me the text or a different link": a link is read; pasted
+// text is stored as the content. The thought keeps its id either way.
+async function replaceLinkContent(chatId: number | string, thoughtId: string, text: string, original: string) {
+  const link = text.match(/https?:\/\/\S+/)?.[0]
+  if (link && text.trim().length < 400) {
+    if (YT_SEARCH.test(link)) {
+      await askInReplyMode(chatId, 'That is a search page too. Reply with a link to the video itself.',
+        'replace_link', thoughtId, { original }, 'Paste the video link')
+      return
+    }
+    await reply(chatId, 'Reading it…')
+    const filled = await fillFromLink(thoughtId, link)
+    if (filled.ok) {
+      await reply(chatId, `\u{1F4DA} Attached: ${filled.title ?? link} (${filled.chars?.toLocaleString()} characters).`,
+        kindKeyboard(thoughtId, 'source'))
+      await askTakeaway(chatId, thoughtId)
+    } else {
+      await askInReplyMode(chatId, `${COULD_NOT_READ}\n(${shorten(link, 80)})`, 'replace_link', thoughtId,
+        { original }, 'Paste the text or another link')
+    }
+    return
+  }
+  if (text.trim().length < MIN_REAL_CONTENT) {
+    await askInReplyMode(chatId, `That's a bit short to be the content (${text.trim().length} characters). Paste the full text, or a link.`,
+      'replace_link', thoughtId, { original }, 'Paste the text or another link')
+    return
+  }
+  await refillThought(db, {
+    thoughtId,
+    content: `\u{1F517} URL: ${original}\n\n${text.trim()}`,
+    metadata: { source: 'url', url: original, pasted: true },
+    sourceText: text.trim(),
+    sourceKind: 'pasted',
+    truncated: false,
+  })
+  await reply(chatId, '\u{1F4DA} Got it. The text is attached to the saved link.', kindKeyboard(thoughtId, 'source'))
+  await askTakeaway(chatId, thoughtId)
+}
+
+// --- Junk review ----------------------------------------------------------------
+// Test messages and commands saved by mistake. Never deleted: Archive sets
+// status = 'archived' (hidden from search, Ask, links and digests).
+async function findJunk() {
+  const { data, error } = await db.from('thoughts')
+    .select('id, content, created_at, status, metadata')
+    .eq('user_id', OWNER_USER_ID)
+    .or('status.is.null,status.neq.archived')
+    .order('created_at')
+  if (error) throw error
+  return (data ?? []).filter((t) => {
+    const c = (t.content ?? '').trim()
+    if ((t.metadata as Record<string, unknown> | null)?.junk_review) return false   // already decided
+    if (/^\/\s*\w*/.test(c)) return true                                            // a saved command
+    return c.length < 120 && /\b(test(ing)?|hello|first thought|ignore this)\b/i.test(c)
+  })
+}
+
+const junkKeyboard = (id: string): Keyboard => [[
+  { text: '\u{1F5C4} Archive', callback_data: `ar:${id}` },
+  { text: '\u{1F44D} Keep', callback_data: `kp:${id}` },
+]]
+
+// --- Goals ------------------------------------------------------------------------
+// Proposed from the owner's voice notes in their own words. A goal is only
+// created when the owner taps Track (CLAUDE.md rule 4).
+const GOALS_SYSTEM = `You read one person's voice notes and list the goals they state, in their own words.
+A goal is something they say they want to do, change, become, or achieve. Use their wording, short and first person
+(for example "Fix my sleep schedule"). Do not invent goals or add advice. One goal per item; if two notes state the
+same goal, list it once with the clearest note.
+Reply with ONLY a JSON object: {"goals": [{"goal": "…", "note": 3}]} where note is the number of the note it came from.`
+
+async function proposeGoals(): Promise<number> {
+  const { data: notes, error } = await db.from('thoughts')
+    .select('id, content, created_at')
+    .eq('user_id', OWNER_USER_ID)
+    .eq('kind', 'my_thought')
+    .like('content', '\u{1F3A4} Voice:%')
+    .or('status.is.null,status.neq.archived')
+    .order('created_at')
+  if (error) throw error
+  if (!notes?.length) return 0
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/call-llm`, {
+    method: 'POST',
+    headers: internalHeaders(),
+    body: JSON.stringify({
+      systemPrompt: GOALS_SYSTEM,
+      prompt: notes.map((n, i) => `[${i + 1}] ${n.content}`).join('\n\n'),
+      maxTokens: 3000,
+      userId: OWNER_USER_ID,
+      source: 'goal-proposals',
+    }),
+  })
+  if (!res.ok) throw new Error(`call-llm failed (${res.status}): ${await res.text()}`)
+  const text = String((await res.json()).text ?? '')
+  const parsed = JSON.parse(text.match(/\{[\s\S]*\}/)?.[0] ?? '{"goals":[]}')
+  const { data: existing } = await db.from('goal_candidates').select('text').eq('user_id', OWNER_USER_ID)
+  const seen = new Set((existing ?? []).map((e) => e.text.toLowerCase()))
+  const rows = (parsed.goals ?? [])
+    .filter((g: { goal?: unknown; note?: unknown }) => typeof g.goal === 'string' && Number.isInteger(g.note)
+      && (g.note as number) >= 1 && (g.note as number) <= notes.length)
+    .filter((g: { goal: string }) => !seen.has(g.goal.toLowerCase()))
+    .map((g: { goal: string; note: number }) => ({
+      user_id: OWNER_USER_ID,
+      text: g.goal.trim().slice(0, 300),
+      source_thought_id: notes[g.note - 1].id,
+    }))
+  if (rows.length) {
+    const { error: insertError } = await db.from('goal_candidates').insert(rows)
+    if (insertError) throw insertError
+  }
+  return rows.length
+}
+
+// Send the next undecided proposal, one at a time.
+async function sendNextGoal(chatId: number | string): Promise<boolean> {
+  const { data: next } = await db.from('goal_candidates')
+    .select('id, text, source_thought_id, created_at')
+    .eq('user_id', OWNER_USER_ID)
+    .is('decision', null)
+    .order('created_at')
+    .limit(1)
+    .maybeSingle()
+  if (!next) return false
+  const { data: note } = next.source_thought_id
+    ? await db.from('thoughts').select('id, created_at').eq('id', next.source_thought_id).maybeSingle()
+    : { data: null }
+  const from = note
+    ? `\nFrom your note /t_${note.id.slice(0, 8)} (${new Date(note.created_at).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })})`
+    : ''
+  await reply(chatId, `\u{1F3AF} Is this a goal you want to track?\n"${next.text}"${from}`, [[
+    { text: '✅ Track', callback_data: `gt:${next.id}` },
+    { text: 'Not a goal', callback_data: `gn:${next.id}` },
+  ]])
+  await db.from('goal_candidates').update({ sent_at: new Date().toISOString() }).eq('id', next.id)
+  return true
+}
+
+// --- Class recaps ------------------------------------------------------------------
+// "/recap Chem 113: we covered…" → class = before the colon. Without a colon,
+// the first word is the class. No summary → ask for it in reply mode.
+function parseRecap(arg: string): { className: string; summary: string } {
+  const colon = arg.indexOf(':')
+  if (colon > 0 && colon < 40) return { className: arg.slice(0, colon).trim(), summary: arg.slice(colon + 1).trim() }
+  const newline = arg.indexOf('\n')
+  if (newline > 0 && newline < 40) return { className: arg.slice(0, newline).trim(), summary: arg.slice(newline + 1).trim() }
+  const words = arg.split(/\s+/).filter(Boolean)
+  // "/recap Chem 113" — just a class name: ask for the summary.
+  if (words.length <= 3) return { className: words.join(' '), summary: '' }
+  return { className: words[0], summary: words.slice(1).join(' ') }
+}
+
+const classTag = (name: string) => name.toLowerCase().replace(/\s+/g, ' ').trim()
+
+const RECAP_QUESTION_SYSTEM = `A student just dictated a quick recap of a class. Ask ONE short follow-up question
+(one sentence, under 25 words) that makes them think a bit more: explain why something works, connect it to
+something they already know, or apply it to an example. Use only what is in the recap. Reply with only the question.`
+
+async function saveRecap(chatId: number | string, className: string, summary: string, messageId?: number) {
+  const { data: saved, error } = await db.from('thoughts').insert({
+    user_id: OWNER_USER_ID,
+    content: `\u{1F4DD} Class recap (${className}): ${summary}`,
+    kind: 'class_note',
+    kind_set_by: 'manual',
+    tags: [classTag(className)],
+    metadata: { source: 'telegram', telegram_message_id: messageId, class: className, recap: true },
+  }).select('id').single()
+  if (error) throw error
+  await reply(chatId, `\u{1F4DD} Saved to Personal (class note) · ${className}`, kindKeyboard(saved.id, 'class_note'))
+
+  let question = ''
+  try {
+    const res = await fetch(`${SUPABASE_URL}/functions/v1/call-llm`, {
+      method: 'POST',
+      headers: internalHeaders(),
+      body: JSON.stringify({
+        systemPrompt: RECAP_QUESTION_SYSTEM,
+        prompt: `Class: ${className}\nRecap: ${summary}`,
+        maxTokens: 1000,
+        userId: OWNER_USER_ID,
+        source: 'recap-question',
+      }),
+    })
+    if (res.ok) question = String((await res.json()).text ?? '').trim().split('\n').find(Boolean) ?? ''
+  } catch (e) {
+    console.error('recap question failed:', e)
+  }
+  if (question) {
+    await askInReplyMode(chatId, `\u{1F914} ${question}`, 'recap_answer', saved.id,
+      { class: className, question }, 'Your answer (optional)')
+  }
 }
 
 // --- Takeaways ---------------------------------------------------------------
@@ -495,6 +786,67 @@ async function handleCallback(cb: any): Promise<void> {
     return
   }
 
+  // Junk review: Archive (status = archived, never deleted) or Keep
+  const junk = data.match(/^(ar|kp):([0-9a-f-]{36})$/)
+  if (junk) {
+    const archive = junk[1] === 'ar'
+    const { data: row } = await db.from('thoughts').select('id, content, metadata')
+      .eq('id', junk[2]).eq('user_id', OWNER_USER_ID).maybeSingle()
+    if (!row) {
+      await telegram('answerCallbackQuery', { callback_query_id: cb.id, text: 'Thought not found.' })
+      return
+    }
+    const metadata = { ...(row.metadata ?? {}), junk_review: archive ? 'archived' : 'keep', junk_reviewed_at: new Date().toISOString() }
+    const { error } = await db.from('thoughts')
+      .update(archive ? { status: 'archived', metadata } : { metadata })
+      .eq('id', row.id).eq('user_id', OWNER_USER_ID)
+    await telegram('answerCallbackQuery', { callback_query_id: cb.id, text: error ? `Failed: ${error.message}` : archive ? 'Archived' : 'Kept' })
+    if (!error) {
+      await telegram('editMessageText', {
+        chat_id: chatId,
+        message_id: messageId,
+        text: `${archive ? '\u{1F5C4} Archived (hidden, not deleted)' : '\u{1F44D} Kept'}: ${shorten(row.content, 120)}`,
+      })
+    }
+    return
+  }
+
+  // Goals: Track creates the goal; Not a goal records the answer. Then the next.
+  const goal = data.match(/^(gt|gn):([0-9a-f-]{36})$/)
+  if (goal) {
+    const track = goal[1] === 'gt'
+    // Claim it first, so a double tap can't create two goals.
+    const { data: claimed } = await db.from('goal_candidates')
+      .update({ decision: track ? 'track' : 'not_goal', decided_at: new Date().toISOString() })
+      .eq('id', goal[2]).eq('user_id', OWNER_USER_ID).is('decision', null)
+      .select('id, text, source_thought_id')
+    const c = claimed?.[0]
+    if (!c) {
+      await telegram('answerCallbackQuery', { callback_query_id: cb.id, text: 'Already answered.' })
+      return
+    }
+    if (track) {
+      const { data: g, error } = await db.from('goals').insert({
+        user_id: OWNER_USER_ID, text: c.text, source_thought_id: c.source_thought_id, status: 'active',
+      }).select('id').single()
+      if (error) {
+        await telegram('answerCallbackQuery', { callback_query_id: cb.id, text: `Could not save: ${error.message}` })
+        await db.from('goal_candidates').update({ decision: null, decided_at: null }).eq('id', c.id)
+        return
+      }
+      await db.from('goal_candidates').update({ goal_id: g.id }).eq('id', c.id)
+    }
+    await telegram('answerCallbackQuery', { callback_query_id: cb.id, text: track ? 'Tracking it' : 'Noted' })
+    await telegram('editMessageText', {
+      chat_id: chatId,
+      message_id: messageId,
+      text: track ? `\u{1F3AF} Tracking: "${c.text}"` : `Not a goal: "${c.text}"`,
+    })
+    const more = await sendNextGoal(chatId)
+    if (!more) await reply(chatId, "That's all of them. /goals shows what you're tracking.")
+    return
+  }
+
   // "Open the item" under a saved takeaway
   const open = data.match(/^op:([0-9a-f-]{36})$/)
   if (open) {
@@ -522,6 +874,40 @@ Deno.serve(async (req) => {
     const denied = rejectUnlessInternal(req)
     if (denied) return denied
     const body = await req.json().catch(() => ({}))
+    const jsonReply = (b: unknown, status = 200) =>
+      new Response(JSON.stringify(b), { status, headers: { 'Content-Type': 'application/json' } })
+    if (body?.action && (!OWNER_CHAT_ID || !OWNER_USER_ID)) return jsonReply({ error: 'owner not configured' }, 500)
+
+    // Fill one bare-link thought (keeps its id). Quiet: only asks the owner
+    // when it needs them (a search link, or a page that can't be read).
+    if (body?.action === 'fix_link' && typeof body.thought_id === 'string') {
+      const { data: row } = await db.from('thoughts').select('id, content')
+        .eq('id', body.thought_id).eq('user_id', OWNER_USER_ID).maybeSingle()
+      if (!row) return jsonReply({ ok: false, error: 'not found' }, 404)
+      const url = String(row.content ?? '').trim()
+      if (!BARE_LINK.test(url)) return jsonReply({ ok: false, error: 'not a bare link' }, 400)
+      const result = await processLink(OWNER_CHAT_ID, row.id, url, { quiet: true })
+      return jsonReply({ ok: true, id: row.id, url, result })
+    }
+
+    // List junk candidates in Telegram, each with Archive / Keep.
+    if (body?.action === 'review_junk') {
+      const junk = await findJunk()
+      if (junk.length) {
+        await reply(OWNER_CHAT_ID, `\u{1F9F9} ${junk.length} saved message(s) look like tests or mistyped commands. Archive hides them (nothing is deleted).`)
+        for (const t of junk) await reply(OWNER_CHAT_ID, shorten(t.content, 300), junkKeyboard(t.id))
+      }
+      return jsonReply({ ok: true, candidates: junk.map((t) => ({ id: t.id, content: shorten(t.content, 80) })) })
+    }
+
+    // Propose goals from voice notes, then send the first for Track / Not a goal.
+    if (body?.action === 'propose_goals') {
+      const added = await proposeGoals()
+      const sent = await sendNextGoal(OWNER_CHAT_ID)
+      if (sent) await reply(OWNER_CHAT_ID, 'I read your voice notes for goals you stated. Answer each one; nothing is tracked unless you tap Track.')
+      return jsonReply({ ok: true, proposed: added, first_sent: sent })
+    }
+
     if (body?.action === 'ask_takeaway' && typeof body.thought_id === 'string') {
       if (!OWNER_CHAT_ID || !OWNER_USER_ID) return new Response('owner not configured', { status: 500 })
       const { data: row } = await db.from('thoughts').select('id, kind, content, summary')
@@ -598,28 +984,62 @@ Deno.serve(async (req) => {
       return ok()
     }
 
-    // A reply to a "What's your takeaway?" question is that takeaway.
+    // A reply to one of the bot's reply-mode questions goes where it belongs.
     const repliedTo = msg.reply_to_message?.message_id
     if (repliedTo) {
       const { data: prompt } = await db
         .from('telegram_prompts')
-        .select('id, thought_id')
+        .select('id, purpose, thought_id, data')
         .eq('chat_id', String(chatId))
         .eq('message_id', repliedTo)
-        .eq('purpose', 'takeaway')
         .maybeSingle()
-      if (prompt?.thought_id) {
-        await saveTakeaway(chatId, prompt.thought_id, text, msg.message_id)
-        await db.from('telegram_prompts').update({ resolved_at: new Date().toISOString() })
+      if (prompt) {
+        const pdata = (prompt.data ?? {}) as Record<string, string>
+        const resolve = () => db.from('telegram_prompts').update({ resolved_at: new Date().toISOString() })
           .eq('id', prompt.id).is('resolved_at', null)
-        return ok()
+        if (prompt.purpose === 'takeaway' && prompt.thought_id) {
+          await saveTakeaway(chatId, prompt.thought_id, text, msg.message_id)
+          await resolve()
+          return ok()
+        }
+        if (prompt.purpose === 'replace_link' && prompt.thought_id) {
+          await resolve()
+          later(replaceLinkContent(chatId, prompt.thought_id, text, pdata.original ?? ''))
+          return ok()
+        }
+        if (prompt.purpose === 'recap') {
+          await resolve()
+          later(saveRecap(chatId, pdata.class ?? 'class', text, msg.message_id))
+          return ok()
+        }
+        if (prompt.purpose === 'recap_answer') {
+          const className = pdata.class ?? 'class'
+          const { data: saved, error } = await db.from('thoughts').insert({
+            user_id: OWNER_USER_ID,
+            content: `\u{1F4DD} Recap follow-up (${className})\nQ: ${pdata.question ?? ''}\nA: ${text}`,
+            kind: 'class_note',
+            kind_set_by: 'manual',
+            tags: [classTag(className)],
+            metadata: { source: 'telegram', class: className, recap_of: prompt.thought_id, telegram_message_id: msg.message_id },
+          }).select('id').single()
+          if (error) throw error
+          await resolve()
+          await reply(chatId, `\u{1F4DD} Saved your answer to Personal (class note) · ${className}`, kindKeyboard(saved.id, 'class_note'))
+          return ok()
+        }
       }
     }
 
-    // Commands look like "/search cats" or "/search@mybot cats"
-    const match = text.match(/^\/(\w+)(?:@\w+)?(?:\s+([\s\S]*))?$/)
+    // Commands look like "/search cats" or "/search@mybot cats". A space
+    // after the slash ("/ search cats") is forgiven. Anything that starts
+    // with "/" is treated as a command and is NEVER saved as a thought.
+    const match = text.match(/^\/\s*(\w+)(?:@\w+)?(?:\s+([\s\S]*))?$/)
     const command = match?.[1]?.toLowerCase()
     const argument = (match?.[2] ?? '').trim()
+    if (text.startsWith('/') && !command) {
+      await reply(chatId, `That looks like a command, but I couldn't read it, so I didn't save it.\n\n${HELP}`)
+      return ok()
+    }
 
     if (command === 'start' || command === 'help') {
       await reply(chatId, HELP)
@@ -628,6 +1048,35 @@ Deno.serve(async (req) => {
 
     if (command?.startsWith('t_')) {
       await showThought(chatId, command.slice(2))
+      return ok()
+    }
+
+    // /recap Chem 113: what we covered…
+    if (command === 'recap') {
+      const { className, summary } = parseRecap(argument)
+      if (!className) {
+        await reply(chatId, 'Tell me the class, like: /recap Chem 113: today we covered…')
+        return ok()
+      }
+      if (!summary) {
+        await askInReplyMode(chatId, `\u{1F4DD} Recap for ${className}: reply with what you covered.`, 'recap', null,
+          { class: className }, 'What did you cover?')
+        return ok()
+      }
+      later(saveRecap(chatId, className, summary, msg.message_id))
+      return ok()
+    }
+
+    // /goals: what you're tracking (goals only exist after you tapped Track)
+    if (command === 'goals') {
+      const { data, error } = await db.from('goals').select('text, source_thought_id, confirmed_at')
+        .eq('user_id', OWNER_USER_ID).eq('status', 'active').order('confirmed_at')
+      if (error) throw error
+      const pending = await sendNextGoal(chatId)
+      await reply(chatId, data?.length
+        ? '\u{1F3AF} Goals you are tracking:\n\n' + data.map((g, i) =>
+          `${i + 1}. ${g.text}${g.source_thought_id ? `  /t_${g.source_thought_id.slice(0, 8)}` : ''}`).join('\n')
+        : pending ? 'No goals tracked yet. Answer the question above.' : 'No goals tracked yet.')
       return ok()
     }
 
@@ -642,6 +1091,7 @@ Deno.serve(async (req) => {
         .from('thoughts')
         .select('content, created_at, kind')
         .eq('user_id', OWNER_USER_ID)
+        .or('status.is.null,status.neq.archived')
         .order('created_at', { ascending: false })
         .limit(5)
       if (error) throw error
@@ -730,6 +1180,15 @@ Deno.serve(async (req) => {
       }
       // If the buttons can't be offered, fall through and save — never drop it.
       console.error('pending insert failed, saving instead:', error?.message)
+    }
+
+    // A bare link: save it, then read it (transcript / article / PDF) into
+    // the same thought. If nothing readable comes back, say so and ask.
+    if (BARE_LINK.test(text)) {
+      const saved = await saveThought(text, msg.message_id)
+      if (!YT_SEARCH.test(text)) await reply(chatId, '\u{1F517} Saved the link. Reading it now…')
+      later(processLink(chatId, saved.id, text))
+      return ok()
     }
 
     // Anything else: save it as a new thought that belongs to the owner.

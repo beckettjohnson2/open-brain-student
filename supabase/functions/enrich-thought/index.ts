@@ -415,6 +415,104 @@ async function relink(supabase: SupabaseClient, page: number) {
   return { ok: true, page, thoughts: data?.length ?? 0, links, more: (data?.length ?? 0) === PAGE };
 }
 
+// =====================================================================
+// RELIABILITY — how much to trust a saved source
+// =====================================================================
+const RELIABILITY = ["research", "expert", "opinion", "unknown"];
+const RELIABILITY_SYSTEM = `You rate how reliable a saved source is, for one person's notes.
+Reply with ONLY a JSON object like {"reliability": "expert", "reason": "short reason"}.
+reliability is exactly one of:
+- research: a peer-reviewed study, systematic review, or official body (government, university, standards org)
+- expert: a credentialed person speaking in their field, or an established outlet (major publication, TED/TED-Ed, recognised educational channel, career/reference site with editorial standards)
+- opinion: an influencer, personal vlog, sales or affiliate pitch, hype, or claims without evidence
+- unknown: you cannot tell from what is given (for example, only a bare link)`;
+
+function parseReliability(text: string): string | null {
+  const match = text.match(/\{[\s\S]*\}/);
+  if (match) {
+    try {
+      const r = String(JSON.parse(match[0]).reliability ?? "").toLowerCase().trim();
+      if (RELIABILITY.includes(r)) return r;
+    } catch { /* fall through */ }
+  }
+  const named = RELIABILITY.filter((k) => new RegExp("\\b" + k + "\\b", "i").test(text));
+  return named.length === 1 ? named[0] : null;
+}
+
+// deno-lint-ignore no-explicit-any
+async function rateSource(supabase: SupabaseClient, row: any, supabaseUrl: string): Promise<string | null> {
+  const res = await fetch(`${supabaseUrl}/functions/v1/call-llm`, {
+    method: "POST",
+    headers: internalHeaders(),
+    body: JSON.stringify({
+      systemPrompt: RELIABILITY_SYSTEM,
+      prompt: `Source (may be cut short):\n"""\n${String(row.content ?? "").slice(0, 2500)}\n"""`,
+      maxTokens: 1024, // room for Haiku's built-in thinking
+      userId: row.user_id ?? undefined,
+      source: "rate-reliability",
+    }),
+  });
+  if (!res.ok) throw new Error(`call-llm failed (${res.status}): ${await res.text()}`);
+  const reliability = parseReliability(String((await res.json()).text ?? ""));
+  if (!reliability) return null;
+  const { error } = await supabase.from("thoughts").update({ reliability }).eq("id", row.id);
+  if (error) throw new Error(error.message);
+  return reliability;
+}
+
+// RELIABILITY: rate the next few sources that have no rating yet.
+async function rateBatch(supabase: SupabaseClient, size: number, supabaseUrl: string) {
+  const { data, error } = await supabase
+    .from("thoughts")
+    .select("id, content, user_id")
+    .eq("kind", "source")
+    .is("reliability", null)
+    .order("created_at", { ascending: true })
+    .limit(size);
+  if (error) throw new Error(error.message);
+  const results: string[] = [];
+  let failed = 0;
+  for (const row of data ?? []) {
+    try {
+      const r = await rateSource(supabase, row, supabaseUrl);
+      if (!r) failed++;
+      results.push((r ?? "FAILED").padEnd(9) + " " + String(row.content ?? "").replace(/\s+/g, " ").slice(0, 60));
+    } catch (e) {
+      failed++;
+      results.push(`failed ${row.id}: ${e instanceof Error ? e.message : String(e)}`);
+    }
+  }
+  const { count } = await supabase.from("thoughts").select("id", { count: "exact", head: true })
+    .eq("kind", "source").is("reliability", null);
+  return { ok: true, processed: results, failed, remaining: count ?? 0 };
+}
+
+// REFRESH: a thought's content was replaced (a bare link that got its
+// transcript or article). Redo tags, summary, reliability, embedding,
+// chunks and links. Its id, date and kind stay the same.
+async function refresh(supabase: SupabaseClient, id: string, supabaseUrl: string, serviceKey: string) {
+  const { data: row, error } = await supabase
+    .from("thoughts")
+    .select("id, content, user_id, tags, category, summary, kind, reliability")
+    .eq("id", id)
+    .maybeSingle();
+  if (error) throw new Error(error.message);
+  if (!row) return { ok: false, message: "not found" };
+
+  const t = await tagThought(row, supabaseUrl, serviceKey, false, false, { force: true });
+  let reliability: string | null = null;
+  if (row.kind === "source") {
+    reliability = await rateSource(supabase, row, supabaseUrl).catch((e) => {
+      console.log(`reliability failed for ${id}: ${e}`);
+      return null;
+    });
+  }
+  const fresh: Row = { ...row, tags: t.tags ?? row.tags, category: t.category ?? row.category, summary: t.summary ?? row.summary };
+  const result = await embedThought(supabase, fresh, { deadline: Date.now() + WORK_MS });
+  if (!result.done) await continueLater(id);
+  return { ok: true, tagged: t.message, reliability, embedded: result.message };
+}
+
 // RETAG: tag older thoughts that were saved before auto-tagging existed
 // (enriched_at is empty), skipping course_setup. After tagging, the main
 // embedding is rebuilt from the new summary + tags and links are refreshed,
@@ -487,6 +585,13 @@ Deno.serve(async (req) => {
     if (payload?.type === "RELINK") {
       return reply(await relink(createClient(supabaseUrl, serviceKey), Math.max(0, Number(payload.page) || 0)));
     }
+    if (payload?.type === "REFRESH" && payload.id) {
+      return reply(await refresh(createClient(supabaseUrl, serviceKey), String(payload.id), supabaseUrl, serviceKey));
+    }
+    if (payload?.type === "RELIABILITY") {
+      const size = Math.min(10, Math.max(1, Number(payload.batch) || 3));
+      return reply(await rateBatch(createClient(supabaseUrl, serviceKey), size, supabaseUrl));
+    }
     if (payload?.type === "RETAG") {
       const size = Math.min(10, Math.max(1, Number(payload.batch) || 3));
       return reply(await retag(createClient(supabaseUrl, serviceKey), {
@@ -511,8 +616,17 @@ Deno.serve(async (req) => {
     const ruleKind = record.kind ? null : kindByRules(record);
     if (ruleKind) await saveKind(createClient(supabaseUrl, serviceKey), record.id, ruleKind, "rule");
 
-    const tagged = await tagThought(record, supabaseUrl, serviceKey, !record.kind && !ruleKind);
+    const tagged = await tagThought(record, supabaseUrl, serviceKey, !record.kind && !ruleKind, false, {
+      keepTags: Array.isArray(record.tags) ? record.tags : [],
+    });
     if (tagged.kind) await saveKind(createClient(supabaseUrl, serviceKey), record.id, tagged.kind, "llm");
+
+    // Saved sources get a reliability rating (one short Haiku call).
+    const finalKind = record.kind ?? ruleKind ?? tagged.kind ?? null;
+    if (finalKind === "source" && !record.reliability) {
+      EdgeRuntime.waitUntil(rateSource(createClient(supabaseUrl, serviceKey), record, supabaseUrl)
+        .catch((e) => console.log(`reliability failed for ${record.id}: ${e}`)));
+    }
 
     // A new Library item (from the web app, MCP, or a long Telegram save)
     // gets a "What's your takeaway?" in Telegram. Saves where the bot already
@@ -562,10 +676,12 @@ async function tagThought(
   serviceKey: string,
   wantKind = false,
   dryRun = false,   // RETAG preview: ask the AI, but save nothing
+  opts: { force?: boolean; keepTags?: string[] } = {},
 ): Promise<{ message: string; tags?: string[]; category?: string | null; summary?: string | null; kind?: string | null }> {
   try {
-    // Already has a category (for example, a weekly digest) — leave it alone.
-    if (record.category || record.enriched_at) {
+    // Already has a category (for example, a weekly digest) — leave it alone,
+    // unless REFRESH asks to redo it because the content changed.
+    if (!opts.force && (record.category || record.enriched_at)) {
       return { message: `Thought ${record.id} already categorised — skipped` };
     }
 
@@ -595,7 +711,10 @@ async function tagThought(
     }
 
     const { text } = await llmRes.json();
-    const { tags, category, summary } = parseEnrichment(text);
+    const parsed = parseEnrichment(text);
+    const { category, summary } = parsed;
+    // Tags set at save time (e.g. a class name from /recap) are kept.
+    const tags = [...new Set([...(opts.keepTags ?? []), ...parsed.tags])].slice(0, 8);
     if (dryRun) return { message: `Preview ${record.id}`, tags, category, summary };
 
     const supabase = createClient(supabaseUrl, serviceKey);

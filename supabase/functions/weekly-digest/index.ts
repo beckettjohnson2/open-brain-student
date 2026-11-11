@@ -23,6 +23,10 @@ KEY THEMES
 A QUESTION YOU SEEM TO BE EXPLORING
 One question, then one sentence on why you think so.
 
+Some notes are saved sources marked [source: research / expert / opinion / unknown].
+If a point comes only from opinion-level sources, say so ("an opinion-level video claims…").
+When sources disagree, prefer research- and expert-level ones and mention the disagreement.
+
 Never invent anything that isn't in the notes. Keep it under 400 words.`;
 
 function reply(body: unknown, status = 200) {
@@ -64,7 +68,7 @@ Deno.serve(async (req) => {
     // Don't summarise old digests inside new digests, and leave out the
     // course build prompts (kind = course_setup) — they aren't your thinking.
     const thoughts = (data ?? []).filter(
-      (t) => t.category !== "digest" && t.kind !== "course_setup" && t.kind !== "report",
+      (t) => t.category !== "digest" && t.kind !== "course_setup" && t.kind !== "report" && t.status !== "archived",
     );
 
     // 2. Not enough to say anything useful? Stop here.
@@ -95,7 +99,8 @@ Deno.serve(async (req) => {
         const body = content.length > PER_THOUGHT_CHARS && t.summary
           ? `${t.summary} (long capture, summarised)`
           : content.slice(0, PER_THOUGHT_CHARS);
-        const tags = Array.isArray(t.tags) && t.tags.length ? `  {tags: ${t.tags.join(", ")}}` : "";
+        const tags = (Array.isArray(t.tags) && t.tags.length ? `  {tags: ${t.tags.join(", ")}}` : "") +
+          (t.kind === "source" ? `  [source: ${t.reliability ?? "unknown"}]` : "");
         notes += `- ${body.replace(/\s+/g, " ").trim()}${tags}\n`;
       }
     }

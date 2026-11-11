@@ -53,6 +53,9 @@ built and what's next.
    `course_setup` stays hidden. Never store a section by hand: change the
    mapping only in `public.section_of()` (and its copy in
    `_shared/kinds.ts` and `index.html`).
+11. **Hide, don't remove.** Unwanted thoughts get `status = 'archived'`
+   (hidden from search, Ask, related, links, digests, Recent). Never delete
+   rows. Goals exist only after the owner taps Track in Telegram.
 
 ## Facts worth knowing
 
@@ -60,7 +63,27 @@ built and what's next.
   `hybrid_search_v2` (adds `kind`/`status`, `include_kinds text[]`; null =
   everything except `course_setup`). `hybrid_search_v3` (bot, MCP, Ask) adds
   `p_section` ('personal' | 'library' | null) and returns `section` and
-  `takeaway_of`.
+  `takeaway_of`. v2 leaves out archived thoughts and ranks `kind = report`
+  (digests, AI write-ups) at half weight, so originals come first.
+  Embeddings: gte-small, 384 dims, via `Supabase.ai.Session` inside edge
+  functions only. Thoughts over 300 words also get chunks in `thought_chunks`.
+- **Reliability:** `thoughts.reliability` (research | expert | opinion |
+  unknown) for `kind = source`, rated by Haiku (`rate-reliability`) on save
+  and on REFRESH; backfill with enrich-thought `{type: "RELIABILITY"}`. Ask and
+  the weekly digest flag opinion-only claims and prefer research/expert.
+- **Captures:** `capture-url` (now also reads PDFs, via `npm:unpdf`) and
+  `capture-youtube` have an internal refill mode (`x-internal-secret` +
+  `thought_id`): they fill an existing thought, keep its id (old text in
+  `metadata.original_content`), then enrich-thought `REFRESH` redoes tags,
+  reliability, embedding, chunks and links. The bot reads every bare link
+  this way; under `MIN_REAL_CONTENT` (200 chars) it asks for the text or
+  another link.
+- **Bot prompts** (`telegram_prompts.purpose`): `takeaway`, `replace_link`,
+  `recap`, `recap_answer`. Internal bot actions: `ask_takeaway`, `fix_link`,
+  `review_junk`, `propose_goals`. Anything starting with `/` is a command
+  and is never saved.
+- **Goals:** `goal_candidates` (proposals from voice notes) → `goals`
+  (status active) only via the Track button (`gt:`/`gn:` callbacks).
 - **Sections:** `thoughts.section` is a generated column =
   `section_of(kind)`. After changing `section_of()`, refresh with
   `update thoughts set kind = kind;`. Every kind change is logged in
@@ -74,12 +97,10 @@ built and what's next.
   the item.
 - **Web app:** `index.html` deploys through Vercel only when pushed to
   GitHub. Ask the owner before pushing.
-  Embeddings: gte-small, 384 dims, via `Supabase.ai.Session` inside edge
-  functions only. Thoughts over 300 words also get chunks in `thought_chunks`.
 - **Enrichment:** the `enrich_on_insert_v2` trigger (`notify_enrich_thought()`,
   pg_net) → `enrich-thought` (tags/category/summary/kind via call-llm, then
   free embedding/chunks/links). Modes: `BACKFILL`, `CONTINUE`, `RELINK`,
-  `CLASSIFY`, `RETAG` (with `dryRun`). The old `enrich-on-insert` webhook was
+  `CLASSIFY`, `RETAG` (with `dryRun`), `REFRESH`, `RELIABILITY`. The old `enrich-on-insert` webhook was
   removed on Nov 11.
 - **Ask my brain:** `supabase/functions/_shared/ask.ts` (`askBrain`,
   `renderAnswer`), used by `telegram-bot` and the `ask_brain` MCP tool.

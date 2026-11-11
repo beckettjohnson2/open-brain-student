@@ -38,7 +38,9 @@ const OWN_KINDS = ["my_thought", "project_doc", "class_note"]; // the owner's ow
 const OWN_BOOST = 1.5;
 const TAKEAWAY_BOOST = 1.2;       // on top of the item's score: takeaway leads
 const ABOUT_ME_BOOST = 1.5;       // Personal first for questions about the owner
-const REPORT_PENALTY = 0.6;
+// Reports (digests, AI write-ups) are already ranked at half weight inside
+// hybrid_search_v2. Among sources, research/expert edge out opinion.
+const RELIABILITY_WEIGHT: Record<string, number> = { research: 1.15, expert: 1.1, unknown: 1, opinion: 0.85 };
 
 const embedder = new Supabase.ai.Session("gte-small");
 
@@ -88,6 +90,7 @@ type Row = {
   kind: string | null;
   status?: string | null;
   takeaway_of?: string | null;
+  reliability?: string | null;
 };
 
 export type AskOptions = {
@@ -119,9 +122,23 @@ function fmtDate(iso: string): string {
   return new Date(iso).toLocaleDateString("en-US", { month: "short", day: "numeric", year: "numeric", timeZone: "UTC" });
 }
 
-function sourceLabel(r: { kind: string | null; content: string; takeaway_of?: string | null }): string {
+function sourceLabel(r: {
+  kind: string | null;
+  content: string;
+  takeaway_of?: string | null;
+  category?: string | null;
+  reliability?: string | null;
+}): string {
   const c = (r.content ?? "").trimStart();
   if (r.takeaway_of) return "your takeaway";
+  if (r.kind === "report" && (r.category === "digest" || /^Weekly digest:/i.test(c))) return "an AI weekly digest";
+  if (r.kind === "source") {
+    const what = c.startsWith("📹") ? "a video you saved"
+      : c.startsWith("🔗") ? "an article you saved"
+      : c.startsWith("📄") ? "a PDF you saved"
+      : "a source you saved";
+    return r.reliability ? `${what} (${r.reliability}-level)` : what;
+  }
   switch (r.kind) {
     case "my_thought": return "your note";
     case "project_doc": return "your document";
@@ -244,7 +261,16 @@ async function search(
   return (data ?? []) as Row[];
 }
 
-const ROW_COLUMNS = "id, content, created_at, tags, category, summary, kind, status, takeaway_of";
+const ROW_COLUMNS = "id, content, created_at, tags, category, summary, kind, status, takeaway_of, reliability";
+
+// Search results don't carry reliability; look it up for the sources found.
+async function addReliability(o: AskOptions, rows: Row[]): Promise<Row[]> {
+  const ids = rows.filter((r) => r.kind === "source" && r.reliability === undefined).map((r) => r.id);
+  if (!ids.length) return rows;
+  const { data } = await o.db.from("thoughts").select("id, reliability").in("id", ids);
+  const byId = new Map((data ?? []).map((d) => [d.id, d.reliability]));
+  return rows.map((r) => (byId.has(r.id) ? { ...r, reliability: byId.get(r.id) } : r));
+}
 
 async function fetchByIds(o: AskOptions, ids: string[]): Promise<Row[]> {
   if (!ids.length) return [];
@@ -287,7 +313,7 @@ function rerank(rows: Row[], intent: Intent): Row[] {
     if (intent === "saved" && r.kind === "source") w *= OWN_BOOST;
     if (r.takeaway_of) w *= TAKEAWAY_BOOST;
     if (intent === "about_me" && sectionOf(r.kind) === "personal") w *= ABOUT_ME_BOOST;
-    if (r.kind === "report" || r.category === "digest") w *= REPORT_PENALTY;
+    if (r.kind === "source" && r.reliability) w *= RELIABILITY_WEIGHT[r.reliability] ?? 1;
     return { r, w };
   });
   // Ties go to the owner's own writing.
@@ -327,6 +353,8 @@ function answerSystem(intent: Intent): string {
 Each item says its section and what it is:
 - PERSONAL: "your note", "your class notes" and "your takeaway" are the person's own words. "an AI write-up you saved" is NOT their own words.
 - LIBRARY: "a video/article/PDF/source you saved" was made by someone else; "your document" is something they made.
+  Saved sources show how reliable they are: research-level (studies, official bodies), expert-level (credentialed people, established outlets), opinion-level (influencers, sales, hype) or unknown-level.
+- "an AI weekly digest" is an AI summary of other notes.
 A "your takeaway" item is the person's own view of a Library item. When a takeaway and its item both cover a point, lead with the takeaway.
 
 Write the answer in two parts:
@@ -336,6 +364,8 @@ Rules:
 - 3 to 6 plain sentences in total. Either part may be empty if nothing in that section is relevant. No headings, bullet points or markdown.
 - Put a citation like [2] after every claim, using only the numbers given. Never cite a number that does not support the claim.
 - If the notes do not contain the answer, set nothing_found to true and leave both parts empty. Do not guess.
+- When a claim rests only on opinion-level sources, say so in that sentence (e.g. "an opinion-level video claims…"). When sources disagree, prefer research- and expert-level ones and mention the disagreement.
+- When a weekly digest and an original note support the same point, cite the original note, not the digest.
 - Do not add general knowledge. The only exception: if one short piece of general knowledge is truly needed, put it in its own sentence starting with "General knowledge, not from your notes:", with no citation.
 - ${INTENT_HINTS[intent]}
 
@@ -428,7 +458,8 @@ export async function askBrain(o: AskOptions): Promise<AskResult> {
   //    Library was asked for — takeaways are Personal).
   if (sectionFilter !== "library") rows = rows.concat(await takeawaysFor(o, rows));
   if (sectionFilter) rows = rows.filter((r) => sectionOf(r.kind) === sectionFilter);
-  rows = rerank(dedupe(rows), intent);
+  rows = rows.filter((r) => r.status !== "archived");
+  rows = rerank(dedupe(await addReliability(o, rows)), intent);
 
   const save = async (fields: Partial<Record<string, unknown>>): Promise<string | null> => {
     const { data, error } = await o.db.from("ask_turns").insert({

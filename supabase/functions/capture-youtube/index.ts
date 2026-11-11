@@ -25,6 +25,8 @@
 // What it does NOT do yet: summarise. That needs an AI key you get in Level 5.
 
 import { createClient } from 'npm:@supabase/supabase-js@2'
+import { INTERNAL_HEADER, rejectUnlessInternal } from '../_shared/internal-auth.ts'
+import { refillThought } from '../_shared/refill.ts'
 
 // The three SUPABASE_ values are provided automatically. You never add them.
 const SUPABASE_URL = Deno.env.get('SUPABASE_URL') ?? ''
@@ -357,19 +359,30 @@ Deno.serve(async (req) => {
   if (req.method !== 'POST') return json({ error: 'Use POST.' }, 405)
 
   try {
-    // Who is asking? Read it from their login token. A user id sent in the
-    // request body is never trusted, because anyone could type anyone's id.
-    const token = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '').trim()
-    if (!token) throw new Problem(401, 'Sign in first.')
-    const asCaller = createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false } })
-    const { data: auth, error: authError } = await asCaller.auth.getUser(token)
-    const user = auth?.user
-    if (authError || !user) throw new Problem(401, 'Sign in first.')
-
-    let body: { url?: unknown } = {}
+    let body: { url?: unknown; thought_id?: unknown } = {}
     try {
       body = await req.json()
     } catch { /* an empty or broken body is handled as "no link" below */ }
+
+    // Refill mode (our own system only, e.g. the Telegram bot): fill an
+    // existing thought instead of saving a new one, keeping its id.
+    let refillId: string | null = null
+    let user: { id: string } | null = null
+    if (req.headers.get(INTERNAL_HEADER)) {
+      const denied = rejectUnlessInternal(req)
+      if (denied) return denied
+      if (typeof body.thought_id !== 'string') throw new Problem(400, 'thought_id is required in refill mode.')
+      refillId = body.thought_id
+    } else {
+      // Who is asking? Read it from their login token. A user id sent in the
+      // request body is never trusted, because anyone could type anyone's id.
+      const token = (req.headers.get('Authorization') ?? '').replace(/^Bearer\s+/i, '').trim()
+      if (!token) throw new Problem(401, 'Sign in first.')
+      const asCaller = createClient(SUPABASE_URL, ANON_KEY, { auth: { persistSession: false } })
+      const { data: auth, error: authError } = await asCaller.auth.getUser(token)
+      user = auth?.user ?? null
+      if (authError || !user) throw new Problem(401, 'Sign in first.')
+    }
     const given = typeof body.url === 'string' ? body.url : ''
     if (!given.trim()) throw new Problem(400, 'Paste a YouTube link first.')
     const videoId = youTubeId(given)
@@ -441,10 +454,30 @@ Deno.serve(async (req) => {
     // Save with the service role key. That key skips your Level 2 security
     // rule, so user_id is set here by hand on every row.
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } })
+
+    if (refillId) {
+      const done = await refillThought(admin, {
+        thoughtId: refillId,
+        content,
+        metadata: {
+          source: 'youtube',
+          title,
+          video_id: videoId,
+          video_url: watchUrl,
+          has_transcript: hasTranscript,
+          fetched_via: fetchedVia,
+        },
+        sourceText: text,
+        sourceKind: hasTranscript ? 'youtube_transcript' : 'youtube_description',
+        truncated,
+      })
+      return json({ ok: true, refilled: true, id: done.id, title, video_id: videoId, has_transcript: hasTranscript, chars: text.length })
+    }
+
     const { data: thought, error: insertError } = await admin
       .from('thoughts')
       .insert({
-        user_id: user.id,
+        user_id: user!.id,
         content,
         metadata: {
           source: 'youtube',
@@ -463,7 +496,7 @@ Deno.serve(async (req) => {
     // If this part fails the thought is already saved, so it only logs.
     const { error: sourceError } = await admin.from('thought_sources').insert({
       thought_id: thought.id,
-      user_id: user.id,
+      user_id: user!.id,
       source_text: text,
       source_kind: hasTranscript ? 'youtube_transcript' : 'youtube_description',
       char_count: text.length,
