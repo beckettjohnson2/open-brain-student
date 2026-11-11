@@ -4,9 +4,9 @@ _Last updated: November 11, 2026_
 
 > **Nov 11 (fixes only):** internal functions now need a shared secret, the
 > Telegram webhook is verified, the 4 ownerless thoughts are fixed, and 38 older
-> thoughts got tags and summaries. One step left for you: run
-> `migrations/2026-11-11b-remove-old-webhook.sql` in the SQL Editor (it removes the
-> old, already-disabled webhook that had the service key in it, and the test thought).
+> thoughts got tags and summaries. The old webhook (which had the service key
+> written into it) and the test thought were removed by the owner in the SQL Editor
+> (`migrations/2026-11-11b-remove-old-webhook.sql`).
 
 ## What's built
 

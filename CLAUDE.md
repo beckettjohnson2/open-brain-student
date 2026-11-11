@@ -57,8 +57,8 @@ built and what's next.
 - **Enrichment:** the `enrich_on_insert_v2` trigger (`notify_enrich_thought()`,
   pg_net) → `enrich-thought` (tags/category/summary/kind via call-llm, then
   free embedding/chunks/links). Modes: `BACKFILL`, `CONTINUE`, `RELINK`,
-  `CLASSIFY`, `RETAG` (with `dryRun`). The old `enrich-on-insert` webhook is
-  disabled.
+  `CLASSIFY`, `RETAG` (with `dryRun`). The old `enrich-on-insert` webhook was
+  removed on Nov 11.
 - **Ask my brain:** `supabase/functions/_shared/ask.ts` (`askBrain`,
   `renderAnswer`), used by `telegram-bot` and the `ask_brain` MCP tool.
   Tables: `ask_turns` (memory, cost, citations; `/new` sets `cleared_at`),
