@@ -129,8 +129,11 @@ built and what's next.
   its progress in `chunk_progress` (next_index/total, last_error, stalls).
   CONTINUE replies at once and works after the reply. RESUME restarts every
   thought with `embedded_at` null; after 3 checks with no progress it sends a
-  Telegram `notify` once. `RECHUNK {id}` rebuilds one thought's chunks in
-  place. Helper: `node scripts/chunking.mjs [id] [--redo]`.
+  Telegram `notify` once. Resuming starts at the first chunk whose saved
+  text differs from the current content (so refilled text is rechunked
+  even with the same chunk count). `RECHUNK {id}` rebuilds one thought's
+  chunks in place; `AUDIT_CHUNKS` (read-only) lists mismatches.
+  Helper: `node scripts/chunking.mjs [id] [--redo] | --audit`.
 - **Owner:** functions using the service key must filter by `OWNER_USER_ID`
   themselves; row-level security doesn't apply to them.
 - **Deploy:** `npx supabase functions deploy <name> --no-verify-jwt` for

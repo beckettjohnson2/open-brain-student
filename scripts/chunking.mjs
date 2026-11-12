@@ -5,6 +5,8 @@
 //   node scripts/chunking.mjs <id>       → CONTINUE one thought
 //   node scripts/chunking.mjs <id> --redo → RECHUNK: redo its chunks from 0,
 //                                           overwritten in place (test/repair)
+//   node scripts/chunking.mjs --audit    → list thoughts whose chunks don't
+//                                           match their text (read-only)
 //
 // Free: embeddings use the built-in gte-small model, no AI calls.
 // Reads INTERNAL_SECRET from .env (never printed).
@@ -15,10 +17,11 @@ const line = readFileSync(".env", "utf8").split(/\r?\n/).find((l) => l.startsWit
 if (!line) throw new Error("INTERNAL_SECRET missing from .env (see PROGRESS.md, Maintenance scripts)");
 const secret = line.slice("INTERNAL_SECRET=".length).trim().replace(/^["']|["']$/g, "");
 
-const id = process.argv[2];
+const audit = process.argv.includes("--audit");
+const id = audit ? undefined : process.argv[2];
 const res = await fetch(URL, {
   method: "POST",
   headers: { "Content-Type": "application/json", "x-internal-secret": secret },
-  body: JSON.stringify(id ? { type: process.argv.includes("--redo") ? "RECHUNK" : "CONTINUE", id } : { type: "RESUME" }),
+  body: JSON.stringify(audit ? { type: "AUDIT_CHUNKS" } : id ?{ type: process.argv.includes("--redo") ? "RECHUNK" : "CONTINUE", id } : { type: "RESUME" }),
 });
 console.log(res.status, await res.text());

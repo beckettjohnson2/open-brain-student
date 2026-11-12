@@ -1,6 +1,17 @@
 # Progress
 
-_Last updated: November 12, 2026_
+_Last updated: November 12, 2026 (later)_
+
+> **Nov 12 (later): Full check-up.** Found and fixed one bug: when the
+> Veritasium video was re-read in English, its 11 German chunks stayed,
+> because the new text also had 11 chunks and the progress tracker took that
+> as done. Chunking now compares each saved chunk's text with the current
+> text. Veritasium is all English now, and a new audit (`node
+> scripts/chunking.mjs --audit`) shows all 59 thoughts' chunks match their
+> text. Also checked: 0 unembedded thoughts, 0 without an owner, every cron
+> job's last run succeeded, section filters, odd searches ("video" alone,
+> quotes), library-only Ask, and all 8 functions refuse callers without the
+> secret. A test "stuck" alert was sent to Telegram.
 
 > **Nov 12: English transcripts, harder tests.** "The Science of Thinking"
 > (Veritasium) had been saved with German captions. The video reader now asks
@@ -95,7 +106,7 @@ _Last updated: November 12, 2026_
 - `powershell -ExecutionPolicy Bypass -File scripts\backfill.ps1`: embed anything not yet embedded (free).
 - `powershell -ExecutionPolicy Bypass -File scripts\backfill-kind.ps1`: classify anything with no kind (rules, then Haiku).
 - `powershell -ExecutionPolicy Bypass -File scripts\backfill-tags.ps1`: tag and summarize anything saved without tags (Haiku, skips course_setup). `-Preview 5` shows 5 without saving.
-- `node scripts/chunking.mjs`: resume unfinished chunking now (what the 15-minute job does). `node scripts/chunking.mjs <id>` continues one thought; add `--redo` to rebuild its chunks from 0, in place (free).
+- `node scripts/chunking.mjs`: resume unfinished chunking now (what the 15-minute job does). `node scripts/chunking.mjs <id>` continues one thought; add `--redo` to rebuild its chunks from 0, in place. `--audit` lists thoughts whose chunks do not match their text (read-only). All free.
 - `node scripts/retrieval-test.mjs`: rerun after every change and compare with `tests/retrieval-history.csv`.
 - All scripts read `INTERNAL_SECRET` from `.env`. If you ever lose `.env`: in the SQL Editor run `select decrypted_secret from vault.decrypted_secrets where name = 'internal_secret';` and put `INTERNAL_SECRET=<that>` in `.env`.
 

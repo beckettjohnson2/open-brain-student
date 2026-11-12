@@ -266,19 +266,22 @@ async function linkThought(supabase: SupabaseClient, row: Row): Promise<number> 
   return links.length;
 }
 
-// Where to start: the progress row if it matches this content's chunk
-// count, otherwise the first chunk index that isn't saved yet (not a plain
-// count, so a gap left by an interrupted run is filled, not skipped).
-async function chunkStart(supabase: SupabaseClient, id: string, total: number): Promise<number> {
+// Where to start: the first chunk whose saved text is missing or differs
+// from the current content. Comparing the text (not just counting rows)
+// means a gap is filled and a thought whose content was replaced (a link
+// refilled with its transcript) is rechunked, even when the new text has
+// the same number of chunks. RECHUNK can force an earlier start through
+// the progress row (next_index = 0).
+async function chunkStart(supabase: SupabaseClient, id: string, chunks: string[]): Promise<number> {
+  const { data, error } = await supabase
+    .from("thought_chunks").select("chunk_index, content").eq("thought_id", id);
+  if (error) throw new Error(`thought_chunks read: ${error.message}`);
+  const saved = new Map((data ?? []).map((c: { chunk_index: number; content: string }) => [c.chunk_index, c.content]));
+  let i = 0;
+  while (i < chunks.length && saved.get(i) === chunks[i]) i++;
   const { data: progress } = await supabase
     .from("chunk_progress").select("next_index, total_chunks").eq("thought_id", id).maybeSingle();
-  if (progress && progress.total_chunks === total) return Math.min(progress.next_index, total);
-  const { data, error } = await supabase
-    .from("thought_chunks").select("chunk_index").eq("thought_id", id);
-  if (error) throw new Error(`thought_chunks read: ${error.message}`);
-  const have = new Set((data ?? []).map((c: { chunk_index: number }) => c.chunk_index));
-  let i = 0;
-  while (i < total && have.has(i)) i++;
+  if (progress && progress.total_chunks === chunks.length) i = Math.min(i, progress.next_index);
   return i;
 }
 
@@ -300,7 +303,7 @@ async function embedChunks(supabase: SupabaseClient, row: Row, deadline: number)
   const chunks = chunkText(row.content ?? "");
   if (chunks.length === 0) return true;
 
-  let next = await chunkStart(supabase, row.id, chunks.length);
+  let next = await chunkStart(supabase, row.id, chunks);
   let doneThisCall = 0;
   await saveProgress(supabase, row, { total_chunks: chunks.length, next_index: next });
   try {
@@ -417,7 +420,8 @@ async function resume(supabase: SupabaseClient, supabaseUrl: string) {
   const results: string[] = [];
   for (const t of data ?? []) {
     const row = t as Row;
-    const total = chunkText(row.content ?? "").length;
+    const chunks = chunkText(row.content ?? "");
+    const total = chunks.length;
     const { data: p } = await supabase.from("chunk_progress")
       .select("next_index, total_chunks, stalls, last_seen_index, last_progress_at, last_error, notified_at")
       .eq("thought_id", row.id).maybeSingle();
@@ -427,7 +431,7 @@ async function resume(supabase: SupabaseClient, supabaseUrl: string) {
       results.push(`${row.id}: busy`);
       continue;
     }
-    const next = p && p.total_chunks === total ? p.next_index : await chunkStart(supabase, row.id, total);
+    const next = await chunkStart(supabase, row.id, chunks);
     const stalls = p && p.last_seen_index === next ? p.stalls + 1 : 0;
     await saveProgress(supabase, row, { total_chunks: total, next_index: next, last_seen_index: next, stalls });
 
@@ -708,6 +712,23 @@ Deno.serve(async (req) => {
       if (pErr) return reply({ ok: false, error: `chunk_progress: ${pErr.message}` });
       await supabase.from("thoughts").update({ embedded_at: null }).eq("id", id);
       return reply({ ok: true, handedOff: await continueLater(id) });
+    }
+    // AUDIT_CHUNKS (read-only): every thought whose saved chunks don't match
+    // its current text (missing, different, or extra past the end).
+    if (payload?.type === "AUDIT_CHUNKS") {
+      const supabase = createClient(supabaseUrl, serviceKey);
+      const { data: thoughts, error } = await supabase.from("thoughts").select("id, content");
+      if (error) return reply({ ok: false, error: error.message });
+      const bad: string[] = [];
+      for (const t of thoughts ?? []) {
+        const chunks = chunkText(t.content ?? "");
+        const { data: saved } = await supabase.from("thought_chunks").select("chunk_index, content").eq("thought_id", t.id);
+        const byIndex = new Map((saved ?? []).map((c: { chunk_index: number; content: string }) => [c.chunk_index, c.content]));
+        const differ = chunks.filter((c, i) => byIndex.get(i) !== c).length;
+        const extra = (saved ?? []).filter((c: { chunk_index: number }) => c.chunk_index >= chunks.length).length;
+        if (differ || extra) bad.push(`${t.id}: ${differ} missing/different, ${extra} extra (of ${chunks.length})`);
+      }
+      return reply({ ok: true, checked: thoughts?.length ?? 0, mismatched: bad });
     }
     if (payload?.type === "RESUME") {
       return reply(await resume(createClient(supabaseUrl, serviceKey), supabaseUrl));
