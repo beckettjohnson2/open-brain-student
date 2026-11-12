@@ -1,6 +1,16 @@
 # Progress
 
-_Last updated: November 11, 2026 (late night)_
+_Last updated: November 12, 2026_
+
+> **Nov 12: English transcripts, harder tests.** "The Science of Thinking"
+> (Veritasium) had been saved with German captions. The video reader now asks
+> Supadata for English, tries YouTube's own English captions if another
+> language comes back, and only then keeps the other language; the language
+> is recorded in `metadata.transcript_lang`. The video was re-read in English
+> (same id; the German copy is in `backups/2026-11-11T07-19-46`). The other 13
+> videos were already English. The retrieval test now has 16 search + 7 Ask
+> cases, including 4 details buried deep in long items (all rank 1, so chunks
+> work) and 2 vague phrasings.
 
 > **Nov 11 (late night): Goals clean-up, reliable chunking, goals in Ask.**
 > `/mygoals` reviews tracked goals one at a time (Keep / Pause / Drop; only the
@@ -113,8 +123,9 @@ _Last updated: November 11, 2026 (late night)_
 | Nov 11 | Security re-check (no backfill needed) | 9/10 | 10/10 | 5/5 |
 | Nov 11 | After filling the 3 YouTube search links | 9/10 | 10/10 | 5/5 |
 | Nov 11 | Reliable chunking + goals in Ask | 9/10 | 10/10 | 5/5 |
+| Nov 12 | Harder cases added (16 search, 7 Ask) + English Veritasium | 14/16 | 16/16 | 7/7 (#15 vague phrasing: rank 5) |
 
-The pre-filled cases are easy (everything already ranks in the top 3), so they mostly catch regressions. Add harder ones: a vague phrasing, or a detail buried deep in a long video.
+Cases 1–10 are easy and mostly catch regressions. Cases 11–14 check details only found deep inside long items (chunks); 15–16 use vague wording. #15 ("the video about getting good at something fast" → The first 20 hours) ranks 5: the one to improve.
 
 ## How to test Ask my brain on your phone
 
@@ -158,5 +169,5 @@ The pre-filled cases are easy (everything already ranks in the top 3), so they m
 
 ## What's next
 
-1. Add harder retrieval test cases, so the test can show improvements and not only regressions.
+1. Vague questions (test #15): e.g. let the search also match a thought's summary and tags by meaning, then rerun the test to see if #15 moves into the top 3.
 2. After a week of Helpful/Wrong taps: decide whether Haiku is good enough or Ask should move to Sonnet 5.5 (about 1–2¢ per question).

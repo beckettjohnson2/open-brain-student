@@ -86,3 +86,40 @@ EXPECT: 57fc73e5
 ## A5
 ASK: what is my favorite pizza topping?
 EXPECT: NOTHING
+
+# ---------------------------------------------------------------------
+# Harder cases (added Nov 12). 11-14: a detail found only deep inside a
+# long video or essay (in a chunk, not the summary or opening).
+# 15-16: vague wording. A6-A7: goals and a long-transcript detail via Ask.
+
+## 11
+Q: why lowering interest rates doesn't help in a deleveraging
+EXPECT: b49c8d4d
+
+## 12
+Q: BPC-157 for healing injuries
+EXPECT: 48b1d5df
+
+## 13
+Q: young people worry equally about everything
+EXPECT: d5073e71
+
+## 14
+Q: the bat and ball question
+EXPECT: 5dd30163
+
+## 15
+Q: the video about getting good at something fast
+EXPECT: 1b5a48f3
+
+## 16
+Q: how should I talk so people actually listen
+EXPECT: d26d9372
+
+## A6
+ASK: what are my goals?
+EXPECT: 198053d8
+
+## A7
+ASK: what does the economic machine video say about debt?
+EXPECT: b49c8d4d

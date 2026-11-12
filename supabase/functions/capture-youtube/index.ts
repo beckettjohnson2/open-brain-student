@@ -139,26 +139,27 @@ function supadataText(content: unknown): string {
   return ''
 }
 
-async function viaSupadata(watchUrl: string): Promise<string> {
-  if (!SUPADATA_API_KEY) return ''
+// Asks for English. Supadata falls back to another language when the video
+// has no English captions; `lang` says which one came back.
+async function viaSupadata(watchUrl: string): Promise<{ text: string; lang: string }> {
+  if (!SUPADATA_API_KEY) return { text: '', lang: '' }
+  // deno-lint-ignore no-explicit-any
+  const out = (d: any) => ({ text: supadataText(d?.content), lang: typeof d?.lang === 'string' ? d.lang : '' })
   const headers = { 'x-api-key': SUPADATA_API_KEY }
   try {
     // mode=native means "only the captions that already exist", which is the
     // quick, cheap request. It never asks Supadata to transcribe the audio.
     const res = await fetch(
-      'https://api.supadata.ai/v1/transcript?text=true&mode=native&url=' + encodeURIComponent(watchUrl),
+      'https://api.supadata.ai/v1/transcript?text=true&mode=native&lang=en&url=' + encodeURIComponent(watchUrl),
       { headers, signal: AbortSignal.timeout(25_000) },
     )
 
-    if (res.status === 200) {
-      const data = await res.json()
-      return supadataText(data?.content)
-    }
+    if (res.status === 200) return out(await res.json())
 
     // 202 means "this one takes a while, here is a ticket, come back for it".
     if (res.status === 202) {
       const jobId = (await res.json())?.jobId
-      if (typeof jobId !== 'string' || !jobId) return ''
+      if (typeof jobId !== 'string' || !jobId) return { text: '', lang: '' }
       for (let attempt = 0; attempt < 20; attempt++) {
         await sleep(1500)
         const check = await fetch(
@@ -167,20 +168,20 @@ async function viaSupadata(watchUrl: string): Promise<string> {
         )
         if (!check.ok) {
           await check.body?.cancel()
-          return ''
+          return { text: '', lang: '' }
         }
         const job = await check.json()
-        if (job?.status === 'completed') return supadataText(job?.content)
-        if (job?.status === 'failed') return ''
+        if (job?.status === 'completed') return out(job)
+        if (job?.status === 'failed') return { text: '', lang: '' }
       }
-      return ''
+      return { text: '', lang: '' }
     }
 
     console.warn('Supadata answered', res.status, (await res.text()).slice(0, 200))
-    return ''
+    return { text: '', lang: '' }
   } catch (err) {
     console.warn('Supadata route failed:', (err as { message?: string })?.message ?? err)
-    return ''
+    return { text: '', lang: '' }
   }
 }
 
@@ -396,11 +397,20 @@ Deno.serve(async (req) => {
     let description = ''
     let keywords: string[] = []
 
-    // Route 1: Supadata
-    text = await viaSupadata(watchUrl)
-    if (text) {
+    let transcriptLang = ''
+    const isEnglish = (lang: string) => !lang || lang.toLowerCase().startsWith('en')
+
+    // Route 1: Supadata (asks for English). A non-English transcript is kept
+    // only as a fallback: Route 2 gets a chance to find English captions.
+    const supa = await viaSupadata(watchUrl)
+    let foreign: { text: string; lang: string; via: string } | null = null
+    if (supa.text && isEnglish(supa.lang)) {
+      text = supa.text
+      transcriptLang = supa.lang
       fetchedVia = 'supadata'
       hasTranscript = true
+    } else if (supa.text) {
+      foreign = { text: supa.text, lang: supa.lang, via: 'supadata' }
     }
 
     // Route 2: Innertube, as the iPhone app and then the Android app
@@ -413,14 +423,26 @@ Deno.serve(async (req) => {
         if (!keywords.length && info.keywords.length) keywords = info.keywords
         const track = pickTrack(info.tracks)
         if (!track?.baseUrl) continue
+        const lang = track.languageCode ?? ''
+        if (!isEnglish(lang) && foreign) continue // no better than what we have
         const captions = await fetchCaptionText(track.baseUrl)
-        if (captions) {
+        if (captions && isEnglish(lang)) {
           text = captions
+          transcriptLang = lang
           fetchedVia = 'innertube_' + app.label
           hasTranscript = true
           break
         }
+        if (captions && !foreign) foreign = { text: captions, lang, via: 'innertube_' + app.label }
       }
+    }
+
+    // No English anywhere: use the other-language captions after all.
+    if (!text && foreign) {
+      text = foreign.text
+      transcriptLang = foreign.lang
+      fetchedVia = foreign.via
+      hasTranscript = true
     }
 
     // Route 3: the written description, clearly labelled as not a transcript
@@ -466,6 +488,7 @@ Deno.serve(async (req) => {
           video_url: watchUrl,
           has_transcript: hasTranscript,
           fetched_via: fetchedVia,
+          transcript_lang: transcriptLang || null,
         },
         sourceText: text,
         sourceKind: hasTranscript ? 'youtube_transcript' : 'youtube_description',
@@ -486,6 +509,7 @@ Deno.serve(async (req) => {
           video_url: watchUrl,
           has_transcript: hasTranscript,
           fetched_via: fetchedVia,
+          transcript_lang: transcriptLang || null,
         },
       })
       .select('id')
@@ -511,6 +535,7 @@ Deno.serve(async (req) => {
       video_id: videoId,
       has_transcript: hasTranscript,
       fetched_via: fetchedVia,
+      transcript_lang: transcriptLang || null,
       chars: text.length,
       truncated,
     })
