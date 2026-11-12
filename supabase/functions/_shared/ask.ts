@@ -26,6 +26,7 @@ import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { internalHeaders } from "./internal-auth.ts";
 import { type Section, sectionOf, SECTION_LABEL } from "./kinds.ts";
 import { keywordQuery } from "./keywords.ts";
+import { finishRun, startRun } from "./runs.ts";
 
 export const ANSWER_MODEL = "claude-haiku-5-5";
 const REWRITE_MODEL = "claude-haiku-5-5";
@@ -105,6 +106,7 @@ export type AskOptions = {
   chatId: string;
   useHistory: boolean;
   section?: SectionFilter | null;  // only search this section
+  runId?: string | null;           // set by askBrain: the Librarian's run in agent_runs
 };
 
 // ---------------------------------------------------------------------------
@@ -197,7 +199,7 @@ async function callLlm(
   const res = await fetch(`${o.supabaseUrl}/functions/v1/call-llm`, {
     method: "POST",
     headers: internalHeaders(),
-    body: JSON.stringify({ ...body, userId: o.userId }),
+    body: JSON.stringify({ ...body, userId: o.userId, ...(o.runId ? { runId: o.runId } : {}) }),
   });
   if (!res.ok) throw new Error(`call-llm failed (${res.status}): ${await res.text()}`);
   const data = await res.json();
@@ -431,7 +433,28 @@ function parseAnswer(text: string, max: number): Parsed {
 // ---------------------------------------------------------------------------
 // The main function
 // ---------------------------------------------------------------------------
+// Every question is a Librarian run in agent_runs (job "ask-brain"), so the
+// run log shows it with its real tokens and cost.
 export async function askBrain(o: AskOptions): Promise<AskResult> {
+  const runId = await startRun(o.db, {
+    userId: o.userId, agent: "Librarian", job: "ask-brain",
+    task: `Answer (${o.channel}): ${o.question.trim().slice(0, 500)}`,
+  });
+  try {
+    const res = await answer({ ...o, runId });
+    await finishRun(o.db, runId, {
+      output: res.nothingFound
+        ? "Nothing in the brain on this."
+        : `${res.answer}\n\nCited: ${res.sources.map((s) => `t_${s.shortId}`).join(", ")}`,
+    });
+    return res;
+  } catch (e) {
+    await finishRun(o.db, runId, { status: "failed", error: e instanceof Error ? e.message : String(e) });
+    throw e;
+  }
+}
+
+async function answer(o: AskOptions): Promise<AskResult> {
   const question = o.question.trim().slice(0, 1000);
   const sectionFilter = o.section ?? null;
   let promptTokens = 0, completionTokens = 0;

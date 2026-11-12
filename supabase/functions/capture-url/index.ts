@@ -347,6 +347,15 @@ Deno.serve(async (req) => {
     const link = finalUrl.href
     const content = `${isPdf ? '\u{1F4C4} PDF' : '\u{1F517} URL'}: ${title ? title + '\n' : ''}${link}\n\n${text}`
 
+    // Preview (internal only, the Fixer): read it but save nothing, so the
+    // owner can see exactly what would change before approving.
+    if (refillId && (body as { preview?: unknown }).preview === true) {
+      return json({
+        ok: true, preview: true, title, url: link, chars: text.length, truncated,
+        content, metadata: { source: 'url', title, url: link }, source_text: text, source_kind: isPdf ? 'pdf' : 'web',
+      })
+    }
+
     if (refillId) {
       const done = await refillThought(admin, {
         thoughtId: refillId,

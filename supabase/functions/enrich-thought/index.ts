@@ -25,6 +25,18 @@ import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient, SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { internalHeaders, rejectUnlessInternal } from "../_shared/internal-auth.ts";
 import { KINDS, type KindInput, kindByRules, sectionOf } from "../_shared/kinds.ts";
+import { finishRun, startRun } from "../_shared/runs.ts";
+
+// Every job here is the "Scout" agent in the run log (agent_runs). A new
+// thought's run stays "working" until its embedding and chunks are done (the
+// run id rides along with each CONTINUE hand-off). AI calls pass the run id
+// to call-llm, which adds their tokens and cost to the run.
+const owner = () => Deno.env.get("OWNER_USER_ID") || null;
+function preview(text: string | null | undefined, max = 80): string {
+  const first = (text ?? "").split("\n").find((l) => l.trim()) ?? "";
+  const s = first.replace(/\s+/g, " ").trim();
+  return s.length > max ? s.slice(0, max - 1) + "…" : s;
+}
 
 const CATEGORIES = ["idea", "learning", "question", "reference", "plan", "reflection"];
 const MIN_LENGTH = 20;        // skip tiny notes like "test" or "ok"
@@ -106,11 +118,13 @@ async function kindByLlm(
   t: KindInput & { id: string; user_id?: string | null },
   supabaseUrl: string,
   serviceKey: string,
+  runId?: string | null,
 ): Promise<string | null> {
   const res = await fetch(`${supabaseUrl}/functions/v1/call-llm`, {
     method: "POST",
     headers: internalHeaders(),
     body: JSON.stringify({
+      ...(runId ? { runId } : {}),
       systemPrompt:
         `You sort notes in one person's personal knowledge base by who wrote them and what they are.\n` +
         `Reply with ONLY a JSON object like {"kind": "my_thought"}. kind is exactly one of:\n${KIND_GUIDE}`,
@@ -127,7 +141,7 @@ async function kindByLlm(
 }
 
 // CLASSIFY: give a kind to the next few thoughts that have none.
-async function classify(supabase: SupabaseClient, batchSize: number, supabaseUrl: string, serviceKey: string) {
+async function classify(supabase: SupabaseClient, batchSize: number, supabaseUrl: string, serviceKey: string, runId?: string | null) {
   const { data, error } = await supabase
     .from("thoughts")
     .select("id, content, category, metadata, user_id")
@@ -143,7 +157,7 @@ async function classify(supabase: SupabaseClient, batchSize: number, supabaseUrl
       let kind = kindByRules(t);
       let setBy: "rule" | "llm" = "rule";
       if (!kind) {
-        kind = await kindByLlm(t, supabaseUrl, serviceKey);
+        kind = await kindByLlm(t, supabaseUrl, serviceKey, runId);
         setBy = "llm";
       }
       if (!kind) {
@@ -365,13 +379,13 @@ async function embedThought(
 // The CONTINUE call answers at once (the work runs after its reply), so we
 // wait for that reply: then we know the hand-off arrived. If it doesn't, the
 // 15-minute RESUME job picks the thought up anyway.
-async function continueLater(thoughtId: string): Promise<boolean> {
+async function continueLater(thoughtId: string, runId?: string | null): Promise<boolean> {
   const url = `${Deno.env.get("SUPABASE_URL")}/functions/v1/enrich-thought`;
   try {
     const res = await fetch(url, {
       method: "POST",
       headers: internalHeaders(),
-      body: JSON.stringify({ type: "CONTINUE", id: thoughtId }),
+      body: JSON.stringify({ type: "CONTINUE", id: thoughtId, ...(runId ? { run_id: runId } : {}) }),
       signal: AbortSignal.timeout(8000),
     });
     await res.body?.cancel();
@@ -387,20 +401,24 @@ const ROW_COLUMNS = "id, content, user_id, tags, category, summary";
 // CONTINUE: keep chunking one long thought, then chain again if needed.
 // Also does the main embedding if it's missing (RESUME sends every
 // unfinished thought here, not only half-chunked ones).
-async function continueThought(supabase: SupabaseClient, id: string) {
+async function continueThought(supabase: SupabaseClient, id: string, runId?: string | null) {
   const { data, error } = await supabase
     .from("thoughts")
     .select(`${ROW_COLUMNS}, embedded_at, has_embedding:embedding`)
     .eq("id", id)
     .maybeSingle();
   if (error) throw new Error(error.message);
-  if (!data || data.embedded_at) return { ok: true, message: "nothing to continue" };
+  if (!data || data.embedded_at) {
+    await finishRun(supabase, runId, { output: "Embedding and chunks done." });
+    return { ok: true, message: "nothing to continue" };
+  }
 
   const result = await embedThought(supabase, data as Row, {
     deadline: Date.now() + WORK_MS,
     hasEmbedding: data.has_embedding != null,
   });
-  if (!result.done) await continueLater(id);
+  if (!result.done) await continueLater(id, runId);
+  else await finishRun(supabase, runId, { output: `Embedding and chunks done. ${result.message}` });
   return { ok: true, message: result.message };
 }
 
@@ -449,6 +467,13 @@ async function resume(supabase: SupabaseClient, supabaseUrl: string) {
     }
     const handed = await continueLater(row.id);
     results.push(`${row.id}: ${next}/${total}, stalls ${stalls}${handed ? "" : ", hand-off failed"}`);
+  }
+  // In the run log only when there was something to restart (it runs every 15 min).
+  if (results.some((r) => !r.endsWith(": busy"))) {
+    const runId = await startRun(supabase, {
+      userId: owner(), agent: "Scout", job: "resume-chunking", task: `Restart unfinished chunking (${results.length} thought(s))`,
+    });
+    await finishRun(supabase, runId, { output: results.join("\n") });
   }
   return { ok: true, resumed: results };
 }
@@ -546,11 +571,12 @@ function parseReliability(text: string): string | null {
 }
 
 // deno-lint-ignore no-explicit-any
-async function rateSource(supabase: SupabaseClient, row: any, supabaseUrl: string): Promise<string | null> {
+async function rateSource(supabase: SupabaseClient, row: any, supabaseUrl: string, runId?: string | null): Promise<string | null> {
   const res = await fetch(`${supabaseUrl}/functions/v1/call-llm`, {
     method: "POST",
     headers: internalHeaders(),
     body: JSON.stringify({
+      ...(runId ? { runId } : {}),
       systemPrompt: RELIABILITY_SYSTEM,
       prompt: `Source (may be cut short):\n"""\n${String(row.content ?? "").slice(0, 2500)}\n"""`,
       maxTokens: 1024, // room for Haiku's built-in thinking
@@ -567,7 +593,7 @@ async function rateSource(supabase: SupabaseClient, row: any, supabaseUrl: strin
 }
 
 // RELIABILITY: rate the next few sources that have no rating yet.
-async function rateBatch(supabase: SupabaseClient, size: number, supabaseUrl: string) {
+async function rateBatch(supabase: SupabaseClient, size: number, supabaseUrl: string, runId?: string | null) {
   const { data, error } = await supabase
     .from("thoughts")
     .select("id, content, user_id")
@@ -580,7 +606,7 @@ async function rateBatch(supabase: SupabaseClient, size: number, supabaseUrl: st
   let failed = 0;
   for (const row of data ?? []) {
     try {
-      const r = await rateSource(supabase, row, supabaseUrl);
+      const r = await rateSource(supabase, row, supabaseUrl, runId);
       if (!r) failed++;
       results.push((r ?? "FAILED").padEnd(9) + " " + String(row.content ?? "").replace(/\s+/g, " ").slice(0, 60));
     } catch (e) {
@@ -605,18 +631,28 @@ async function refresh(supabase: SupabaseClient, id: string, supabaseUrl: string
   if (error) throw new Error(error.message);
   if (!row) return { ok: false, message: "not found" };
 
-  const t = await tagThought(row, supabaseUrl, serviceKey, false, false, { force: true });
-  let reliability: string | null = null;
-  if (row.kind === "source") {
-    reliability = await rateSource(supabase, row, supabaseUrl).catch((e) => {
-      console.log(`reliability failed for ${id}: ${e}`);
-      return null;
-    });
+  const runId = await startRun(supabase, {
+    userId: row.user_id ?? owner(), agent: "Scout", job: "refresh", thoughtId: id,
+    task: `Redo tags, reliability, embedding and chunks after new text: ${preview(row.content)}`,
+  });
+  try {
+    const t = await tagThought(row, supabaseUrl, serviceKey, false, false, { force: true, runId });
+    let reliability: string | null = null;
+    if (row.kind === "source") {
+      reliability = await rateSource(supabase, row, supabaseUrl, runId).catch((e) => {
+        console.log(`reliability failed for ${id}: ${e}`);
+        return null;
+      });
+    }
+    const fresh: Row = { ...row, tags: t.tags ?? row.tags, category: t.category ?? row.category, summary: t.summary ?? row.summary };
+    const result = await embedThought(supabase, fresh, { deadline: Date.now() + WORK_MS });
+    if (!result.done) await continueLater(id, runId);
+    else await finishRun(supabase, runId, { output: `${t.message}; reliability ${reliability ?? "unchanged"}; ${result.message}` });
+    return { ok: true, tagged: t.message, reliability, embedded: result.message };
+  } catch (e) {
+    await finishRun(supabase, runId, { status: "failed", error: e instanceof Error ? e.message : String(e) });
+    throw e;
   }
-  const fresh: Row = { ...row, tags: t.tags ?? row.tags, category: t.category ?? row.category, summary: t.summary ?? row.summary };
-  const result = await embedThought(supabase, fresh, { deadline: Date.now() + WORK_MS });
-  if (!result.done) await continueLater(id);
-  return { ok: true, tagged: t.message, reliability, embedded: result.message };
 }
 
 // RETAG: tag older thoughts that were saved before auto-tagging existed
@@ -626,7 +662,7 @@ async function refresh(supabase: SupabaseClient, id: string, supabaseUrl: string
 // thought that is too short to tag is never retried forever.
 async function retag(
   supabase: SupabaseClient,
-  o: { size: number; after: string | null; dryRun: boolean; supabaseUrl: string; serviceKey: string },
+  o: { size: number; after: string | null; dryRun: boolean; supabaseUrl: string; serviceKey: string; runId?: string | null },
 ) {
   let q = supabase
     .from("thoughts")
@@ -642,7 +678,7 @@ async function retag(
   const results: unknown[] = [];
   let failed = 0;
   for (const row of data ?? []) {
-    const t = await tagThought(row, o.supabaseUrl, o.serviceKey, false, o.dryRun);
+    const t = await tagThought(row, o.supabaseUrl, o.serviceKey, false, o.dryRun, { runId: o.runId });
     const preview = (row.content ?? "").replace(/\s+/g, " ").slice(0, 60);
     if (!t.tags) {
       if (!/too short/.test(t.message)) failed++;
@@ -681,16 +717,42 @@ Deno.serve(async (req) => {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
     const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
+    // A maintenance batch (scripts): one Scout run per call, with the result
+    // as its output. A call that found nothing to do isn't logged.
+    const batchRun = async <T extends Record<string, unknown>>(
+      job: string, task: string, work: (runId: string | null) => Promise<T>,
+    ): Promise<T> => {
+      const supabase = createClient(supabaseUrl, serviceKey);
+      const runId = await startRun(supabase, { userId: owner(), agent: "Scout", job, task });
+      try {
+        const result = await work(runId);
+        const items = (result.processed ?? result.results ?? []) as unknown[];
+        const did = items.length > 0 || Number(result.links ?? 0) > 0;
+        if (!did && runId) {
+          // Nothing done: close it as done with that said, so the log stays honest.
+          await finishRun(supabase, runId, { output: "Nothing to do." });
+        } else {
+          await finishRun(supabase, runId, { output: JSON.stringify(result).slice(0, 4000) });
+        }
+        return result;
+      } catch (e) {
+        await finishRun(supabase, runId, { status: "failed", error: e instanceof Error ? e.message : String(e) });
+        throw e;
+      }
+    };
+
     if (payload?.type === "BACKFILL") {
       const size = Math.min(10, Math.max(1, Number(payload.batch) || 5));
-      return reply(await backfill(createClient(supabaseUrl, serviceKey), size));
+      return reply(await batchRun("backfill", `Embed up to ${size} thoughts with no embedding`,
+        () => backfill(createClient(supabaseUrl, serviceKey), size)));
     }
     if (payload?.type === "CONTINUE" && payload.id) {
       // Answer at once so the caller knows the hand-off arrived; the work
       // runs after the reply.
       const id = String(payload.id);
+      const runId = typeof payload.run_id === "string" ? payload.run_id : null;
       EdgeRuntime.waitUntil(
-        continueThought(createClient(supabaseUrl, serviceKey), id)
+        continueThought(createClient(supabaseUrl, serviceKey), id, runId)
           .then((r) => console.log(r.message))
           .catch((e) => console.log(`continue failed for ${id}: ${e instanceof Error ? e.message : String(e)}`)),
       );
@@ -734,33 +796,47 @@ Deno.serve(async (req) => {
       return reply(await resume(createClient(supabaseUrl, serviceKey), supabaseUrl));
     }
     if (payload?.type === "RELINK") {
-      return reply(await relink(createClient(supabaseUrl, serviceKey), Math.max(0, Number(payload.page) || 0)));
+      const page = Math.max(0, Number(payload.page) || 0);
+      return reply(await batchRun("relink", `Rebuild graph links, page ${page}`,
+        () => relink(createClient(supabaseUrl, serviceKey), page)));
     }
     if (payload?.type === "REFRESH" && payload.id) {
       return reply(await refresh(createClient(supabaseUrl, serviceKey), String(payload.id), supabaseUrl, serviceKey));
     }
     if (payload?.type === "RELIABILITY") {
       const size = Math.min(10, Math.max(1, Number(payload.batch) || 3));
-      return reply(await rateBatch(createClient(supabaseUrl, serviceKey), size, supabaseUrl));
+      return reply(await batchRun("rate-reliability", `Rate up to ${size} unrated sources`,
+        (runId) => rateBatch(createClient(supabaseUrl, serviceKey), size, supabaseUrl, runId)));
     }
     if (payload?.type === "RETAG") {
       const size = Math.min(10, Math.max(1, Number(payload.batch) || 3));
-      return reply(await retag(createClient(supabaseUrl, serviceKey), {
-        size,
-        after: typeof payload.after === "string" ? payload.after : null,
-        dryRun: payload.dryRun === true,
-        supabaseUrl,
-        serviceKey,
-      }));
+      const dryRun = payload.dryRun === true;
+      return reply(await batchRun("retag", `${dryRun ? "Preview tags for" : "Tag"} up to ${size} untagged thoughts`,
+        (runId) => retag(createClient(supabaseUrl, serviceKey), {
+          size,
+          after: typeof payload.after === "string" ? payload.after : null,
+          dryRun,
+          supabaseUrl,
+          serviceKey,
+          runId,
+        })));
     }
     if (payload?.type === "CLASSIFY") {
       const size = Math.min(10, Math.max(1, Number(payload.batch) || 5));
-      return reply(await classify(createClient(supabaseUrl, serviceKey), size, supabaseUrl, serviceKey));
+      return reply(await batchRun("classify-kind", `Give a kind to up to ${size} thoughts with none`,
+        (runId) => classify(createClient(supabaseUrl, serviceKey), size, supabaseUrl, serviceKey, runId)));
     }
 
     if (payload?.type !== "INSERT" || !record?.id) {
       return ok("Not an insert with a record — nothing to do");
     }
+
+    // The run log: Scout is working on this new thought until its
+    // embedding and chunks are done.
+    const runId = await startRun(createClient(supabaseUrl, serviceKey), {
+      userId: record.user_id ?? owner(), agent: "Scout", job: "enrich-thought", thoughtId: record.id,
+      task: `Enrich a new thought (tags, kind, summary, embedding, links): ${preview(record.content ?? record.text)}`,
+    });
 
     // Kind: rules first. If they can't decide, the tagging call below is
     // asked for it as well, so it costs nothing extra.
@@ -769,13 +845,14 @@ Deno.serve(async (req) => {
 
     const tagged = await tagThought(record, supabaseUrl, serviceKey, !record.kind && !ruleKind, false, {
       keepTags: Array.isArray(record.tags) ? record.tags : [],
+      runId,
     });
     if (tagged.kind) await saveKind(createClient(supabaseUrl, serviceKey), record.id, tagged.kind, "llm");
 
     // Saved sources get a reliability rating (one short Haiku call).
     const finalKind = record.kind ?? ruleKind ?? tagged.kind ?? null;
     if (finalKind === "source" && !record.reliability) {
-      EdgeRuntime.waitUntil(rateSource(createClient(supabaseUrl, serviceKey), record, supabaseUrl)
+      EdgeRuntime.waitUntil(rateSource(createClient(supabaseUrl, serviceKey), record, supabaseUrl, runId)
         .catch((e) => console.log(`reliability failed for ${record.id}: ${e}`)));
     }
 
@@ -807,9 +884,15 @@ Deno.serve(async (req) => {
     const work = embedThought(supabase, row, { deadline: Date.now() + WORK_MS })
       .then(async (r) => {
         console.log(r.message);
-        if (!r.done) await continueLater(row.id);
+        if (!r.done) await continueLater(row.id, runId);
+        else await finishRun(supabase, runId, { output: `${tagged.message}; ${r.message}` });
       })
-      .catch((e) => console.log(`embedding failed for ${record.id}: ${e instanceof Error ? e.message : String(e)}`));
+      .catch(async (e) => {
+        const msg = e instanceof Error ? e.message : String(e);
+        console.log(`embedding failed for ${record.id}: ${msg}`);
+        // The 15-minute RESUME job retries the embedding; this run records the failure.
+        await finishRun(supabase, runId, { status: "failed", error: `${tagged.message}; embedding failed: ${msg}` });
+      });
     EdgeRuntime.waitUntil(work);
 
     return ok(tagged.message);
@@ -827,7 +910,7 @@ async function tagThought(
   serviceKey: string,
   wantKind = false,
   dryRun = false,   // RETAG preview: ask the AI, but save nothing
-  opts: { force?: boolean; keepTags?: string[] } = {},
+  opts: { force?: boolean; keepTags?: string[]; runId?: string | null } = {},
 ): Promise<{ message: string; tags?: string[]; category?: string | null; summary?: string | null; kind?: string | null }> {
   try {
     // Already has a category (for example, a weekly digest) — leave it alone,
@@ -854,6 +937,7 @@ async function tagThought(
         maxTokens: 1024,
         userId: record.user_id,      // bill this call to the thought's owner
         source: "enrich-thought",
+        ...(opts.runId ? { runId: opts.runId } : {}),
       }),
     });
 

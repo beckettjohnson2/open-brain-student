@@ -33,6 +33,11 @@ built and what's next.
      `call-llm/index.ts` first, or its cost is logged as $0.
    - Always pass `source` (the job name) and `userId`, so tokens and cost are
      logged per job in `llm_usage`. See them: `select * from llm_usage_by_job;`
+   - Also pass `runId` (an `agent_runs` id): call-llm then adds the call's
+     tokens and cost to that run and its order (`add_run_usage`). Every AI
+     call belongs to a run (check: `select count(*) from llm_usage where
+     run_id is null and created_at > now() - interval '1 day';` should be 0).
+     Prices live in `_shared/prices.ts`.
 3. **No destructive migrations.** Additive changes only (new nullable columns,
    new tables, `create or replace` keeping the same inputs and outputs).
    Nothing dropped or renamed. **Back up before any schema change:**
@@ -57,8 +62,34 @@ built and what's next.
    in the existing `telegram-bot` function. `handleCallback` routes by a
    `callback_data` prefix (`fb:` feedback, `sv:`/`an:` Save it/Answer it,
    `k:<kind>:<id>` set kind, `km:` kind menu, `tk:` pick takeaway item,
-   `op:` open item, `gt:`/`gn:` goal proposals, `mg:k|p|d:` /mygoals review). Add new buttons there, and keep `callback_data` under
+   `op:` open item, `gt:`/`gn:` goal proposals, `mg:k|p|d:` /mygoals review,
+   `kg:` Send to King, `ko:a|e|c|g|x|s:<order>` order Approve / Edit / Cancel /
+   Go on / Stop / Save as report, `fx:a|n:<run>` Fixer Approve / Reject,
+   `mr:<id>:<offset>` Show more). Add new buttons there, and keep `callback_data` under
    64 bytes.
+12. **Crew rules (King + workers, `supabase/functions/crew`).**
+   - Nothing runs before the owner taps **Approve** on the King's plan. The
+     Fixer changes nothing before a second **Approve** on its exact change list.
+     Never approve on the owner's behalf, except test orders the owner asked
+     for, and never a Fixer change.
+   - Workers only READ the brain. The only writes: "Save as report" (kind =
+     report, after the owner taps it) and the Fixer's housekeeping (re-capture,
+     archive, change kind). Never delete. No messages to anyone but the owner
+     (telegram-bot `notify` sends only to the owner's chat), no posting,
+     purchases, trading, or anything outside the brain. The King refuses such orders.
+   - Haiku for every agent (`agents.model`). Limits in `crew_config`:
+     `max_worker_steps` 8, `cost_cap_usd` 0.05 per order (the crew stops and
+     asks before passing it), `critic_retries` 1.
+   - Every agent step AND every background job writes `agent_runs`
+     (queued | working | waiting_on_me | done | failed). The 3D office will show
+     only this data, so a new job must call `startRun`/`finishRun`
+     (`_shared/runs.ts`) and pass `runId` to call-llm. Background jobs are
+     agent `Scout` (job = enrich-thought, refresh, resume-chunking,
+     weekly-digest, goal-proposals, …); Ask is `Librarian` (job ask-brain);
+     the recap question is `Tutor` (job recap-question).
+   - Every result cites notes as `[t_<8 hex>]` inside the crew, shown to the
+     owner as `[n]` plus `/t_` links. The Critic checks them; it sends a failed
+     draft back once, then the problems are shown with the result.
 10. **Never delete thoughts. Sections are derived from kind.** Personal =
    `my_thought`, `class_note`, `report`; Library = `source`, `project_doc`;
    `course_setup` stays hidden. Never store a section by hand: change the
@@ -94,8 +125,9 @@ built and what's next.
   another link.
 - **Bot prompts** (`telegram_prompts.purpose`): `takeaway`, `replace_link`,
   `recap`, `recap_answer`. Internal bot actions: `ask_takeaway`, `fix_link`,
-  `review_junk`, `propose_goals`, `notify` (plain text to the owner). Anything starting with `/` is a command
-  and is never saved.
+  `review_junk`, `propose_goals`, `notify` (text to the owner, optional
+  `keyboard`, long texts split; returns `message_id`). Anything starting with `/` is a command
+  and is never saved, even as a reply to a bot question (the question stays open).
 - **Goals:** `goal_candidates` (proposals from voice notes) → `goals`
   (status active) only via the Track button (`gt:`/`gn:` callbacks).
   `/mygoals` sets status active/paused/dropped (never deletes). Ask adds the
@@ -124,7 +156,20 @@ built and what's next.
   `answer_feedback`, `telegram_pending`. View: `ask_quality`. Redeploy BOTH
   `telegram-bot` and `open-brain-mcp` after changing `_shared/`.
 - **Cron:** `keep-brain-awake` (Sun and Wed 09:00 UTC), `weekly-brain-digest` (Sun 15:00 UTC),
-  `resume-chunking` (every 15 min → enrich-thought `RESUME`).
+  `resume-chunking` (every 15 min → enrich-thought `RESUME`), `resume-orders`
+  (every 15 min → crew `resume`: re-kicks lost hand-offs, retries a step stuck
+  5+ min once, closes finished Scout runs).
+- **Crew:** tables `agents` (registry: name, role, symbol_key, item_key,
+  model, system_prompt, allowed_tools, active), `crew_config`, `orders`,
+  `agent_runs`; view `agent_board`. Flow: `plan` (King, 1 Haiku call) →
+  Telegram plan with buttons → `approve` queues one run per step → `advance`
+  runs ONE step per call, then calls itself (confirmed hand-off) → Critic →
+  King's final check (no AI call) → result in Telegram. Entry points: `/king`,
+  the "Send to King" button (messages that look like instructions, see
+  `looksLikeInstruction`), MCP `king_order`. `/orders`, `/o_<8 hex>` show them.
+  Capture functions have an internal `preview: true` refill mode (read, don't
+  save) that the Fixer uses to show before/after sizes. Test helper calls:
+  crew `{action: "scan"}` (read-only capture check), `{action: "show", order}`.
 - **Chunking:** at most `CHUNKS_PER_CALL` (3) chunks per call, each saved with
   its progress in `chunk_progress` (next_index/total, last_error, stalls).
   CONTINUE replies at once and works after the reply. RESUME restarts every
@@ -138,9 +183,12 @@ built and what's next.
   themselves; row-level security doesn't apply to them.
 - **Deploy:** `npx supabase functions deploy <name> --no-verify-jwt` for
   `telegram-bot`, `open-brain-mcp`, `enrich-thought`, `weekly-digest`,
-  `call-llm`. Deploy `search-brain`, `capture-url` and `capture-youtube`
+  `call-llm`, `crew`. After changing `_shared/`, redeploy every function that
+  imports the changed file. Type-check first (no local Deno; this works):
+  `npx -y deno@2.1.4 check --no-lock <types.d.ts> <fn>/index.ts`, with a small
+  d.ts declaring `Supabase.ai.Session` and `EdgeRuntime`. Deploy `search-brain`, `capture-url` and `capture-youtube`
   without that flag (they check logins).
-- **Internal secret:** `call-llm`, `enrich-thought` and `weekly-digest` call
+- **Internal secret:** `call-llm`, `enrich-thought`, `weekly-digest` and `crew` call
   `rejectUnlessInternal(req)` (`_shared/internal-auth.ts`) and return 401
   without the `x-internal-secret` header. Any new internal call must send
   `internalHeaders()`. The value lives in Vault (`internal_secret`, read by

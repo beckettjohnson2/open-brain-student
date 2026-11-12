@@ -13,7 +13,7 @@
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "jsr:@supabase/supabase-js@2";
 import { askBrain, renderAnswer } from "../_shared/ask.ts";
-import { INTERNAL_HEADER, internalSecret, safeEqual } from "../_shared/internal-auth.ts";
+import { INTERNAL_HEADER, internalHeaders, internalSecret, safeEqual } from "../_shared/internal-auth.ts";
 import { KIND_LABEL, SECTION_LABEL, sectionOf } from "../_shared/kinds.ts";
 import { keywordQuery } from "../_shared/keywords.ts";
 
@@ -161,6 +161,25 @@ const TOOLS = [
           minimum: 1,
           maximum: 50,
         },
+      },
+    },
+  },
+  {
+    name: "king_order",
+    description:
+      "Give an order to the user's agent crew. The King breaks it into steps for workers " +
+      "(Librarian searches the brain, Tutor makes study plans and quizzes from class notes, " +
+      "Reviewer checks a piece of the user's writing, Writer drafts, Critic checks every claim is " +
+      "cited, Fixer does safe housekeeping). The plan is sent to the user's Telegram with " +
+      "Approve / Edit / Cancel: NOTHING runs until the user taps Approve there, and the result " +
+      "comes back in Telegram with citations and the cost. Works only inside the brain (no " +
+      "messages to anyone, no posting or buying). Pass `order` to place a new order, or " +
+      "`order_id` to check an order's steps and result.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        order: { type: "string", description: "The order, in plain words" },
+        order_id: { type: "string", description: "An order's id (or its first 8 characters) to check on" },
       },
     },
   },
@@ -330,9 +349,31 @@ async function askBrainTool(args: Record<string, unknown>): Promise<string> {
   return renderAnswer(res, "mcp");
 }
 
+// king_order: the same crew as /king in Telegram. Approval only in Telegram.
+async function kingOrder(args: Record<string, unknown>): Promise<string> {
+  const order = String(args.order ?? "").trim();
+  const orderId = String(args.order_id ?? "").trim();
+  if (!order && !orderId) throw new Error("Pass `order` (a new order) or `order_id` (to check one).");
+  const res = await fetch(`${SUPABASE_URL}/functions/v1/crew`, {
+    method: "POST",
+    headers: internalHeaders(),
+    body: JSON.stringify(order
+      ? { action: "plan", text: order, source: "mcp" }
+      : { action: "show", order: orderId, style: "mcp" }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (order) {
+    if (!body.ok) throw new Error(`The King could not plan it: ${body.error ?? `HTTP ${res.status}`}`);
+    return `${body.plan_text ?? ""}\n\nOrder id: ${body.order_id}. The plan is in the user's Telegram; it runs only ` +
+      `after they tap Approve there, and the result arrives in Telegram. Check it later with king_order {order_id}.`;
+  }
+  return String(body.text ?? body.error ?? "Order not found.");
+}
+
 // Look up which function to run for each tool name.
 const TOOL_HANDLERS: Record<string, (args: Record<string, unknown>) => Promise<string>> = {
   ask_brain: askBrainTool,
+  king_order: kingOrder,
   search_thoughts: searchThoughts,
   related_thoughts: relatedThoughts,
   list_recent: listRecent,

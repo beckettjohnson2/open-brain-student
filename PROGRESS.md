@@ -1,6 +1,26 @@
 # Progress
 
-_Last updated: November 12, 2026 (later)_
+_Last updated: November 12, 2026 (night)_
+
+> **Nov 12 (night): Agent crew + bug fixes.** A "King" now takes orders
+> (`/king …`, a **Send to King** button, or Claude Desktop's `king_order`),
+> replies with a plan and its estimated cost, and runs nothing until you tap
+> **Approve**. Workers: Librarian (searches), Tutor (study plans, quizzes),
+> Reviewer (checks your writing), Writer (drafts), Critic (every claim cited,
+> sends a draft back once), Fixer (housekeeping, only after a second Approve on
+> its exact change list), Scout (the background jobs). Everything they do is
+> logged in `orders` and `agent_runs`, with real costs, for the 3D office
+> later. Limits: Haiku only, 8 steps, 5¢ per order (it asks before passing
+> it). Test orders: Chem 113 study plan 1.1¢, public speaking 0.8¢, essay
+> review 0.8¢, transcript check under 0.1¢ (nothing needed fixing).
+> **Bug fixes:** the "/search the danger…" takeaway is archived, and a "/"
+> reply to a takeaway question now runs the command (the question stays
+> open). Instruction-like messages ("Delete that") get **Save as note / Send
+> to King** buttons. The two instruction messages and "/ search speaking
+> confidently" were already archived. The Julian Treasure transcript was
+> never cut off (all 9,103 characters and 9 chunks are there); the Telegram
+> `/t_` view stopped at 3,500 characters. Long thoughts now have a
+> **Show more** button.
 
 > **Nov 12 (later): Full check-up.** Found and fixed one bug: when the
 > Veritasium video was re-read in English, its 11 German chunks stayed,
@@ -98,6 +118,11 @@ _Last updated: November 12, 2026 (later)_
 | **Web app sections** (Nov 11) | All / Personal / Library filters on Recent; each card shows its section and has a kind picker | Recent tab |
 | **Goal review** (Nov 11) | `/mygoals` shows each tracked goal with **Keep / Pause / Drop**, one at a time. Pause and Drop only change its status (nothing deleted); only active goals count in `/goals` and Ask | `/mygoals` |
 | **Goals in Ask** (Nov 11) | "About me" questions (what are my goals, what do I think about…) add the notes behind your active goals, marked as tracked; goal questions list them first, cited | `? what are my goals` |
+| **Agent crew** (Nov 12) | The King turns an order into 1–7 worker steps plus a Critic check, shows the plan and an estimated cost, and waits for **Approve / Edit / Cancel**. Steps run one at a time through call-llm (Haiku), each passing its output on. The result comes back with numbered citations (`/t_` links), the crew that worked on it, and the actual cost, plus **Save as report** (kind = report). Max 8 worker steps, 5¢ per order (it stops and asks **Go on / Stop**). It refuses anything outside your brain (emailing, posting, buying) | `/king make me a study plan for…` · `/orders` · `/o_xxxxxxxx` for one order step by step · Claude Desktop: `king_order` |
+| **Fixer** (Nov 12) | Housekeeping when you ask: re-capture a link (first reads it without saving, shows old vs new size, and only proposes a longer text), archive, change kind. Lists the exact changes and waits for **Approve / Reject**. Never deletes; replaced text is kept in the thought's metadata | `/king find saved videos with cut-off transcripts and fix them` |
+| **Send to King** (Nov 12) | Messages that read like an instruction to the bot ("Delete that", "Look up the videos and add them", "Can you…") get **Save as note / Send to King** instead of being saved | Telegram |
+| **Run log** (Nov 12) | `agents` (8 agents with symbol/item keys for the 3D office), `orders`, `agent_runs` (every step and background job: queued → working → done / failed / waiting on me, with task, output, tokens, cost). Every AI call is tied to a run; run, order and receipt totals match | `select * from agent_board;` · `select * from agent_runs order by created_at desc limit 20;` |
+| **Show more** (Nov 12) | `/t_` shows long thoughts 3,500 characters at a time with a **Show more** button | Tap a `/t_` link to a long video |
 | **Reliable chunking** (Nov 11) | Long thoughts are chunked in small resumable steps (max 3 chunks per call, each saved with its progress in `chunk_progress`). Every 15 minutes `resume-chunking` restarts anything unfinished; after 3 checks with no progress you get a Telegram message (once) | `select * from chunk_progress where done_at is null;` |
 
 ## Maintenance scripts
@@ -121,6 +146,10 @@ _Last updated: November 12, 2026 (later)_
 - "Mathew 5:27-32" is too short to tag, so it stays untagged.
 - The Telegram bot can't receive voice notes (it would need a paid transcription service). Dictate with your keyboard's mic key instead.
 - `?` used to mean search in Telegram; it now asks a question. Use `/search` for the plain list.
+- The crew's Critic is strict: in all 3 drafting tests it sent the first draft back once (each order cost about 1.5× its estimate). The revised drafts passed.
+- YouTube won't tell Supabase how long a video is, so the Fixer can't compare a transcript with the video's length. Instead it flags punctuated transcripts that stop mid-sentence and re-reads those. The AI-trading video's transcript ends "…trading harder. I", but re-reading gave the same text, so the video's own captions end there.
+- Instruction detection is a word rule ("delete that", "look up…", "can you…"). A note that starts like an order ("Find a study group") gets the two buttons; tap Save as note.
+- You can't approve an order from Claude Desktop, on purpose: approval only happens in Telegram.
 
 ## Retrieval scores
 
@@ -136,6 +165,7 @@ _Last updated: November 12, 2026 (later)_
 | Nov 11 | Reliable chunking + goals in Ask | 9/10 | 10/10 | 5/5 |
 | Nov 12 | Harder cases added (16 search, 7 Ask) + English Veritasium | 14/16 | 16/16 | 7/7 (#15 vague phrasing: rank 5) |
 | Nov 12 | Filler words left out of keyword matching | 16/16 | 16/16 | 7/7 (#7 rank 4 → 1, #15 rank 5 → 1) |
+| Nov 12 | Agent crew + run log (Ask now logs as Librarian runs) | 16/16 | 16/16 | 7/7 |
 
 Cases 1–10 are easy and mostly catch regressions. Cases 11–14 check details only found deep inside long items (chunks); 15–16 use vague wording. All 16 rank 1–3 now; add new cases whenever a real search disappoints you.
 
@@ -154,6 +184,17 @@ Cases 1–10 are easy and mostly catch regressions. Cases 11–14 check details 
 
 1. **Old "paste the video link" messages**: all 3 videos are filled now. Ignore those bot messages (replying would only re-read the same video).
 2. **Goals**: done. 5 active, 11 dropped (`/mygoals` to change).
+
+## How to test the crew on your phone
+
+1. Scroll up in Telegram: you'll find the 4 test orders' plans and results. Tap a `/t_` link in a result to open the note it cites.
+2. **One Fixer proposal is waiting for you:** change your "About Me" profile from project doc to my thought, which moves it to Personal (this was in Known issues). Tap **Approve** to do it or **Reject** to leave it. Either way you then get a short report.
+3. Send `/king make me 5 quiz questions on projectile motion`. You get a plan with Approve / Edit / Cancel. Tap **Edit**, reply with "make it 3 questions", and check that a new plan comes. Tap **Approve**; about a minute later the result arrives with sources and its cost. Tap **Save as report**.
+4. Send `/orders`. Your last 10 orders, each with its status and cost. Tap one `/o_…` to see every step.
+5. Send `Delete that`. You should get **Save as note / Send to King** (not "Saved").
+6. Send `/king email my professor that I'm sick`. The King should refuse.
+7. Find an old takeaway question ("💡 What's your takeaway…"), reply to it with `/search sleep`. You get search results and "your earlier question is still open", and nothing is saved.
+8. Send `/t_d26d9372` (Julian Treasure). Tap **Show more** until "(End.)". The transcript ends with "(Applause)".
 
 ## How to test goals and chunking on your phone
 
@@ -181,5 +222,7 @@ Cases 1–10 are easy and mostly catch regressions. Cases 11–14 check details 
 
 ## What's next
 
-1. Add a new test case whenever a real search or answer disappoints you (copy the question and the thought it should find into `tests/retrieval-cases.txt`).
-2. After a week of Helpful/Wrong taps: decide whether Haiku is good enough or Ask should move to Sonnet 5.5 (about 1–2¢ per question).
+1. **The 3D office** (next session): it reads only `agents` (symbol_key, item_key), `agent_board`, `orders` and `agent_runs`. Row-level security already lets your login read your own rows.
+2. Tune the agents' prompts after a week of orders (they're in the `agents` table; the output format stays in code, so editing a prompt can't break the pipeline).
+3. Add a new test case whenever a real search or answer disappoints you (copy the question and the thought it should find into `tests/retrieval-cases.txt`).
+4. After a week of Helpful/Wrong taps: decide whether Haiku is good enough or Ask should move to Sonnet 5.5 (about 1–2¢ per question).

@@ -477,19 +477,30 @@ Deno.serve(async (req) => {
     // rule, so user_id is set here by hand on every row.
     const admin = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, { auth: { persistSession: false } })
 
+    const refillMeta = {
+      source: 'youtube',
+      title,
+      video_id: videoId,
+      video_url: watchUrl,
+      has_transcript: hasTranscript,
+      fetched_via: fetchedVia,
+      transcript_lang: transcriptLang || null,
+    }
+    // Preview (internal only, the Fixer): read it but save nothing, so the
+    // owner can see exactly what would change before approving.
+    if (refillId && (body as { preview?: unknown }).preview === true) {
+      return json({
+        ok: true, preview: true, title, video_id: videoId, has_transcript: hasTranscript, chars: text.length, truncated,
+        content, metadata: refillMeta, source_text: text,
+        source_kind: hasTranscript ? 'youtube_transcript' : 'youtube_description',
+      })
+    }
+
     if (refillId) {
       const done = await refillThought(admin, {
         thoughtId: refillId,
         content,
-        metadata: {
-          source: 'youtube',
-          title,
-          video_id: videoId,
-          video_url: watchUrl,
-          has_transcript: hasTranscript,
-          fetched_via: fetchedVia,
-          transcript_lang: transcriptLang || null,
-        },
+        metadata: refillMeta,
         sourceText: text,
         sourceKind: hasTranscript ? 'youtube_transcript' : 'youtube_description',
         truncated,

@@ -2,8 +2,9 @@
 // on your own mind. Called automatically every week by pg_cron.
 // Every AI call goes through YOUR gateway (call-llm), never a provider directly.
 
-import { createClient } from "npm:@supabase/supabase-js@2";
+import { createClient, type SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { internalHeaders, rejectUnlessInternal } from "../_shared/internal-auth.ts";
+import { finishRun, startRun } from "../_shared/runs.ts";
 
 const DAYS = 7;
 const MIN_THOUGHTS = 5;
@@ -45,10 +46,23 @@ Deno.serve(async (req) => {
   const denied = rejectUnlessInternal(req);
   if (denied) return denied;
 
+  // The run log: the digest is a Scout job (agent_runs).
+  const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!);
+  const runId = await startRun(supabase, {
+    userId: Deno.env.get("OWNER_USER_ID") || null, agent: "Scout", job: "weekly-digest",
+    task: `Write the weekly digest of the last ${DAYS} days`,
+  });
+  const res = await digest(supabase, runId);
+  const out = await res.clone().json().catch(() => ({}));
+  await finishRun(supabase, runId, out.ok
+    ? { output: out.skipped ? String(out.message) : `Digest saved (${out.thoughts} thoughts). ${String(out.preview ?? "").slice(0, 300)}` }
+    : { status: "failed", error: String(out.error ?? `HTTP ${res.status}`) });
+  return res;
+});
+
+async function digest(supabase: SupabaseClient, runId: string | null): Promise<Response> {
   try {
     const supabaseUrl = Deno.env.get("SUPABASE_URL")!;
-    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-    const supabase = createClient(supabaseUrl, serviceKey);
 
     const now = new Date();
     const since = new Date(now.getTime() - DAYS * 24 * 60 * 60 * 1000);
@@ -116,6 +130,7 @@ Deno.serve(async (req) => {
         maxTokens: 4096,
         userId,
         source: "weekly-digest",
+        ...(runId ? { runId } : {}),
       }),
     });
 
@@ -150,4 +165,4 @@ Deno.serve(async (req) => {
     console.error("weekly-digest error:", message);
     return reply({ ok: false, error: message }, 500);
   }
-});
+}

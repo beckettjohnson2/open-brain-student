@@ -4,43 +4,21 @@
 // Add the new provider's API key. No other code changes needed.
 //
 // To switch models, change LLM_MODEL in Supabase secrets.
-// (Also add the new model's price to PRICES below so your receipts stay accurate.)
+// (Also add the new model's price to PRICES in _shared/prices.ts so your receipts stay accurate.)
+//
+// Pass `runId` (an agent_runs id) and the call's tokens and cost are also
+// added to that run and its order (public.add_run_usage).
 //
 // Notice what is NOT in this file: your API key. It is read from Supabase
 // secrets at runtime, so this file is safe to push to GitHub.
 
 import { createClient } from "npm:@supabase/supabase-js@2";
 import { rejectUnlessInternal } from "../_shared/internal-auth.ts";
+import { estimateCost } from "../_shared/prices.ts";
 
-// ---------- Prices (USD per 1 million tokens) ----------
-// Used only to estimate cost for your llm_usage receipts.
-// A model missing from this list still works — its cost is just logged as 0.
-type Price = {
-  input: number;
-  output: number;
-  longThreshold?: number; // prompts bigger than this many tokens...
-  longInput?: number;     // ...are billed at these higher rates
-  longOutput?: number;
-};
-
-const PRICES: Record<string, Price> = {
-  "claude-haiku-5-5": {
-    input: 0.10,
-    output: 0.50,
-    longThreshold: 100_000,
-    longInput: 0.50,
-    longOutput: 2.50,
-  },
-};
-
-function estimateCost(model: string, promptTokens: number, completionTokens: number): number {
-  const p = PRICES[model];
-  if (!p) return 0;
-  const isLong = p.longThreshold !== undefined && promptTokens > p.longThreshold;
-  const inRate = isLong && p.longInput !== undefined ? p.longInput : p.input;
-  const outRate = isLong && p.longOutput !== undefined ? p.longOutput : p.output;
-  return (promptTokens * inRate + completionTokens * outRate) / 1_000_000;
-}
+// ---------- Prices ----------
+// PRICES live in _shared/prices.ts (the crew uses them for estimates too).
+// A model missing from that list still works; its cost is just logged as 0.
 
 // ---------- Providers ----------
 // Each provider is one small function with the same shape.
@@ -129,6 +107,7 @@ function logUsage(entry: {
   model: string;
   promptTokens: number;
   completionTokens: number;
+  runId?: string;
 }) {
   try {
     if (!entry.userId) return; // no one to bill it to — skip quietly
@@ -149,6 +128,7 @@ function logUsage(entry: {
         prompt_tokens: entry.promptTokens,
         completion_tokens: entry.completionTokens,
         cost_usd: estimateCost(entry.model, entry.promptTokens, entry.completionTokens),
+        ...(entry.runId ? { run_id: entry.runId } : {}),
       })
       .then(
         ({ error }) => {
@@ -163,6 +143,20 @@ function logUsage(entry: {
     (globalThis as any).EdgeRuntime?.waitUntil?.(insert);
   } catch (e) {
     console.warn("llm_usage logging crashed (ignored):", e);
+  }
+}
+
+async function addRunUsage(runId: string, promptTokens: number, completionTokens: number, cost: number) {
+  try {
+    const url = Deno.env.get("SUPABASE_URL");
+    const serviceKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY");
+    if (!url || !serviceKey) return;
+    const { error } = await createClient(url, serviceKey).rpc("add_run_usage", {
+      p_run_id: runId, p_prompt: promptTokens, p_completion: completionTokens, p_cost: cost,
+    });
+    if (error) console.warn("add_run_usage failed (ignored):", error.message);
+  } catch (e) {
+    console.warn("add_run_usage crashed (ignored):", e);
   }
 }
 
@@ -214,18 +208,26 @@ Deno.serve(async (req) => {
     return json({ error: message }, 502);
   }
 
+  const cost = estimateCost(model, result.promptTokens, result.completionTokens);
+  const runId = typeof body.runId === "string" && /^[0-9a-f-]{36}$/i.test(body.runId) ? body.runId : undefined;
   logUsage({
     userId: typeof body.userId === "string" ? body.userId : undefined,
     source: typeof body.source === "string" ? body.source : undefined,
     model,
     promptTokens: result.promptTokens,
     completionTokens: result.completionTokens,
+    runId,
   });
+  // The call belongs to an agent run: add its tokens and cost to the run
+  // (and the run's order). Awaited, so the caller reads up-to-date totals
+  // (the crew checks the cost cap right after). Never breaks the answer.
+  if (runId) await addRunUsage(runId, result.promptTokens, result.completionTokens, cost);
 
-  // usage and model are extra fields; callers that only read `text` are unaffected.
+  // usage, model and cost are extra fields; callers that only read `text` are unaffected.
   return json({
     text: result.text,
     model,
     usage: { prompt_tokens: result.promptTokens, completion_tokens: result.completionTokens },
+    cost_usd: cost,
   });
 });
