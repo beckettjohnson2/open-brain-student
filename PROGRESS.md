@@ -101,7 +101,7 @@ _Last updated: November 12, 2026_
 
 ## Known issues
 
-- Long documents can crowd generic questions: after the Paul Graham essay got its 67,000 characters, test #7 ("what does an industrial engineer actually do") slipped from rank 3 to 4 because the essay matches common words. Still top 10.
+- Very generic questions with no specific word (e.g. "what did I learn this week") rely on meaning alone, because filler words are left out of keyword matching. Use a specific word when you can.
 - "What are my goals" lists your 5 tracked goals first, then goals mentioned in other notes ("Beyond those…"), which can include ones you dropped. They're still in your notes, just not tracked.
 - If a thought's text is ever replaced by a shorter one, chunks past the new end stay (chunks are never deleted). Doesn't happen today: only bare links get refilled, and they had no chunks.
 - Retrieval test A4 ("what did I decide about investing") is variable. Answers draw on several relevant notes and don't always cite the expected voice note. The answer itself is correct and cited.
@@ -124,8 +124,9 @@ _Last updated: November 12, 2026_
 | Nov 11 | After filling the 3 YouTube search links | 9/10 | 10/10 | 5/5 |
 | Nov 11 | Reliable chunking + goals in Ask | 9/10 | 10/10 | 5/5 |
 | Nov 12 | Harder cases added (16 search, 7 Ask) + English Veritasium | 14/16 | 16/16 | 7/7 (#15 vague phrasing: rank 5) |
+| Nov 12 | Filler words left out of keyword matching | 16/16 | 16/16 | 7/7 (#7 rank 4 → 1, #15 rank 5 → 1) |
 
-Cases 1–10 are easy and mostly catch regressions. Cases 11–14 check details only found deep inside long items (chunks); 15–16 use vague wording. #15 ("the video about getting good at something fast" → The first 20 hours) ranks 5: the one to improve.
+Cases 1–10 are easy and mostly catch regressions. Cases 11–14 check details only found deep inside long items (chunks); 15–16 use vague wording. All 16 rank 1–3 now; add new cases whenever a real search disappoints you.
 
 ## How to test Ask my brain on your phone
 
@@ -169,5 +170,5 @@ Cases 1–10 are easy and mostly catch regressions. Cases 11–14 check details 
 
 ## What's next
 
-1. Vague questions (test #15): e.g. let the search also match a thought's summary and tags by meaning, then rerun the test to see if #15 moves into the top 3.
+1. Add a new test case whenever a real search or answer disappoints you (copy the question and the thought it should find into `tests/retrieval-cases.txt`).
 2. After a week of Helpful/Wrong taps: decide whether Haiku is good enough or Ask should move to Sonnet 5.5 (about 1–2¢ per question).

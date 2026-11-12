@@ -10,6 +10,7 @@
 
 import "jsr:@supabase/functions-js/edge-runtime.d.ts";
 import { createClient } from "npm:@supabase/supabase-js@2";
+import { keywordQuery } from "../_shared/keywords.ts";
 
 const MATCH_COUNT = 20;
 const RELATED_COUNT = 3;
@@ -50,7 +51,7 @@ Deno.serve(async (req) => {
     const vector = await embedder.run(text, { mean_pool: true, normalize: true });
     const { data, error } = await db.rpc("hybrid_search", {
       query_embedding: JSON.stringify(Array.from(vector as number[])),
-      query_text: text,
+      query_text: keywordQuery(text),
       match_count: MATCH_COUNT,
       min_similarity: MIN_SIMILARITY,
     });

@@ -17,6 +17,7 @@ import { createClient } from 'npm:@supabase/supabase-js@2'
 import { askBrain, clearHistory, renderAnswer } from '../_shared/ask.ts'
 import { INTERNAL_HEADER, internalHeaders, rejectUnlessInternal, safeEqual } from '../_shared/internal-auth.ts'
 import { MIN_REAL_CONTENT, refillThought } from '../_shared/refill.ts'
+import { keywordQuery } from '../_shared/keywords.ts'
 import {
   DEFAULT_KIND, KIND_LABEL, kindByRules, PICKABLE, type Section, SECTION_LABEL, sectionOf,
 } from '../_shared/kinds.ts'
@@ -61,7 +62,7 @@ async function searchBrain(query: string, section: 'personal' | 'library' | null
     const vector = await embedder.run(query, { mean_pool: true, normalize: true })
     const { data, error } = await db.rpc('hybrid_search_v3', {
       query_embedding: JSON.stringify(Array.from(vector as number[])),
-      query_text: query,
+      query_text: keywordQuery(query),
       match_count: count,
       p_user_id: OWNER_USER_ID,
       min_similarity: 0.78,

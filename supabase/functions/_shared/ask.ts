@@ -25,6 +25,7 @@
 import type { SupabaseClient } from "npm:@supabase/supabase-js@2";
 import { internalHeaders } from "./internal-auth.ts";
 import { type Section, sectionOf, SECTION_LABEL } from "./kinds.ts";
+import { keywordQuery } from "./keywords.ts";
 
 export const ANSWER_MODEL = "claude-haiku-5-5";
 const REWRITE_MODEL = "claude-haiku-5-5";
@@ -252,7 +253,7 @@ async function search(
 ): Promise<Row[]> {
   const { data, error } = await o.db.rpc("hybrid_search_v3", {
     query_embedding: await embed(query),
-    query_text: query,
+    query_text: keywordQuery(query),
     match_count: count,
     p_user_id: o.userId,
     min_similarity: minSimilarity,

@@ -78,6 +78,9 @@ built and what's next.
   (digests, AI write-ups) at half weight, so originals come first.
   Embeddings: gte-small, 384 dims, via `Supabase.ai.Session` inside edge
   functions only. Thoughts over 300 words also get chunks in `thought_chunks`.
+  Every caller passes `query_text: keywordQuery(q)` (`_shared/keywords.ts`):
+  the keyword half ANDs every word, so filler like "video", "something",
+  "actually" is dropped there; the embedding uses the question as typed.
 - **Reliability:** `thoughts.reliability` (research | expert | opinion |
   unknown) for `kind = source`, rated by Haiku (`rate-reliability`) on save
   and on REFRESH; backfill with enrich-thought `{type: "RELIABILITY"}`. Ask and
