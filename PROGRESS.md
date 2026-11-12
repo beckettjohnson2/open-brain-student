@@ -2,6 +2,16 @@
 
 _Last updated: November 12, 2026 (night)_
 
+> **Nov 12 (night, recheck): all passing, not pushed yet.** Rechecked: all 9
+> functions refuse callers without the secret; both 15-minute jobs succeed;
+> Edit, Cancel, a second Approve on an old or cancelled plan (refused), Save
+> as report (saved, tagged and logged, then archived because it was only a
+> test; you can still save the Chem 113 plan yourself), resume, MCP
+> `king_order`, chunk audit (60/60 match), 0 unembedded, 0 ownerless,
+> search 16/16. All 33 AI calls since the crew went live belong to a run,
+> and run costs equal the receipts ($0.036 total). The only open item is
+> the Fixer's "About Me" proposal, waiting for your tap.
+>
 > **Nov 12 (night): Agent crew + bug fixes.** A "King" now takes orders
 > (`/king …`, a **Send to King** button, or Claude Desktop's `king_order`),
 > replies with a plan and its estimated cost, and runs nothing until you tap
@@ -148,7 +158,7 @@ _Last updated: November 12, 2026 (night)_
 - `?` used to mean search in Telegram; it now asks a question. Use `/search` for the plain list.
 - The crew's Critic is strict: in all 3 drafting tests it sent the first draft back once (each order cost about 1.5× its estimate). The revised drafts passed.
 - YouTube won't tell Supabase how long a video is, so the Fixer can't compare a transcript with the video's length. Instead it flags punctuated transcripts that stop mid-sentence and re-reads those. The AI-trading video's transcript ends "…trading harder. I", but re-reading gave the same text, so the video's own captions end there.
-- Instruction detection is a word rule ("delete that", "look up…", "can you…"). A note that starts like an order ("Find a study group") gets the two buttons; tap Save as note.
+- Instruction detection is a word rule: "can you…", "please…", or an order verb (delete, find, look up, archive…) aimed at the bot ("that", "the videos", "my notes") or 3 words or fewer. Tested on 13 messages: notes like "Remember to email my lab partner", "Fix my sleep schedule" and "Find a study group" save normally. If a real note ever gets the two buttons, tap Save as note.
 - You can't approve an order from Claude Desktop, on purpose: approval only happens in Telegram.
 
 ## Retrieval scores
