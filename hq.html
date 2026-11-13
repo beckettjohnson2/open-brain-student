@@ -17,46 +17,218 @@
 } }
 </script>
 <style>
-  :root { --bg: #0b0d14; --text: #e8eaf2; --muted: #9aa0b4; --line: #2a2f40; --accent: #6366f1; }
+  :root {
+    --bg: #0b0d14; --text: #e8eaf2; --muted: #9aa0b4; --line: #2a2f40; --accent: #6366f1;
+    --holo: rgba(125, 211, 252, 0.38); --holo-bg: rgba(9, 15, 30, 0.84); --cyan: #7dd3fc;
+    --amber: #fbbf24; --red: #f87171; --green: #4ade80; --blue: #60a5fa;
+  }
+  * { box-sizing: border-box; }
   html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overflow: hidden;
-    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; font-size: 15px; }
   canvas { display: block; touch-action: none; }
+  [hidden] { display: none !important; }
+  button, a.btn, select { font: inherit; font-size: 0.85rem; color: var(--text); background: rgba(20, 24, 36, 0.82);
+    border: 1px solid var(--line); border-radius: 999px; padding: 7px 13px; min-height: 36px; cursor: pointer;
+    text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
+  button:disabled { opacity: 0.5; cursor: wait; }
+  button:focus-visible, a:focus-visible, select:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
+  button.ok { border-color: var(--green); color: #bbf7d0; }
+  button.no { border-color: var(--red); color: #fecaca; }
+  button.go { border-color: var(--amber); color: #fde68a; }
+
+  /* top bar */
   .bar { position: fixed; top: calc(10px + env(safe-area-inset-top, 0px)); left: 12px; right: 12px;
-    display: flex; gap: 8px; align-items: center; z-index: 5; pointer-events: none; }
+    display: flex; gap: 6px; align-items: center; z-index: 10; pointer-events: none; }
   .bar > * { pointer-events: auto; }
-  .bar h1 { font-size: 1rem; margin: 0 auto 0 0; font-weight: 700; text-shadow: 0 1px 6px #000; }
-  button, a.btn { font: inherit; font-size: 0.85rem; color: var(--text); background: rgba(20,24,36,0.8);
-    border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; min-height: 36px; cursor: pointer;
-    text-decoration: none; display: inline-flex; align-items: center; }
+  .bar h1 { font-size: 1rem; margin: 0 auto 0 0; font-weight: 700; text-shadow: 0 1px 6px #000; white-space: nowrap; }
+  .live { font-size: 0.75rem; color: var(--muted); margin-left: 8px; font-weight: 500; }
+  .live::before { content: "●"; margin-right: 4px; color: #6b7280; }
+  .live.on::before { color: var(--green); }
+  @media (max-width: 460px) { .bar h1 .name { display: none; } .bar .hide-sm { display: none; } }
+
+  /* the "needs you" pill */
+  .pill { position: fixed; z-index: 10; top: calc(56px + env(safe-area-inset-top, 0px)); left: 12px;
+    border-color: rgba(96, 165, 250, 0.6); color: #dbeafe; background: rgba(30, 58, 138, 0.45);
+    box-shadow: 0 0 14px rgba(96, 165, 250, 0.25); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+  .pill.need { border-color: var(--amber); color: #fef3c7; background: rgba(120, 72, 0, 0.5);
+    box-shadow: 0 0 16px rgba(251, 191, 36, 0.35); animation: needpulse 2.4s ease-in-out infinite; }
+  @keyframes needpulse { 50% { box-shadow: 0 0 26px rgba(251, 191, 36, 0.55); } }
+  .pill .chev { opacity: 0.7; font-size: 0.7rem; }
+
+  /* holographic sheets */
+  .sheet { position: fixed; z-index: 20; background: var(--holo-bg); border: 1px solid var(--holo);
+    border-radius: 14px; padding: 14px 14px 16px; overflow-y: auto; overscroll-behavior: contain;
+    box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.08), 0 0 30px rgba(56, 189, 248, 0.14), inset 0 0 40px rgba(56, 189, 248, 0.05);
+    backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
+    background-image: repeating-linear-gradient(0deg, rgba(125, 211, 252, 0.035) 0 1px, transparent 1px 4px);
+    animation: holo-in 0.22s ease-out; }
+  @keyframes holo-in { from { opacity: 0; transform: translateY(8px) scale(0.985); } }
+  #boardSheet { left: 12px; top: calc(100px + env(safe-area-inset-top, 0px)); width: 370px; max-height: calc(100% - 190px); }
+  #agentSheet, #coreSheet { right: 12px; top: calc(56px + env(safe-area-inset-top, 0px)); width: 370px; max-height: calc(100% - 150px); }
+  @media (max-width: 720px) {
+    .sheet, #boardSheet, #agentSheet, #coreSheet { left: 0; right: 0; top: auto; bottom: 0; width: auto;
+      max-height: 70vh; border-radius: 18px 18px 0 0; padding-bottom: calc(18px + env(safe-area-inset-bottom, 0px));
+      animation: sheet-up 0.25s ease-out; }
+    @keyframes sheet-up { from { transform: translateY(40%); opacity: 0; } }
+    .sheet::before { content: ""; display: block; width: 40px; height: 4px; border-radius: 4px;
+      background: rgba(255, 255, 255, 0.25); margin: -4px auto 10px; }
+  }
+  .sheet h2 { font-size: 1.05rem; margin: 0; display: flex; align-items: center; gap: 8px; }
+  .sheet h3 { font-size: 0.72rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--cyan);
+    margin: 16px 0 6px; font-weight: 600; }
+  .sheet .head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+  .sheet .x { min-height: 32px; padding: 4px 11px; }
+  .sub { color: var(--muted); font-size: 0.84rem; margin: 4px 0 0; }
+  .row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+  ul.list { list-style: none; margin: 0; padding: 0; }
+  ul.list li { padding: 7px 0; border-top: 1px solid rgba(125, 211, 252, 0.1); font-size: 0.86rem; }
+  ul.list li:first-child { border-top: 0; }
+  .meta { color: var(--muted); font-size: 0.76rem; }
+  .preview { color: #c8cde0; font-size: 0.8rem; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 3px; }
+  .empty { color: var(--muted); font-size: 0.84rem; }
+  .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: #6b7280; }
+  .s-working { background: var(--blue); box-shadow: 0 0 8px var(--blue); }
+  .s-thinking { background: #a78bfa; box-shadow: 0 0 8px #a78bfa; }
+  .s-waiting { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
+  .s-failed { background: var(--red); }
+  .s-queued { background: #93c5fd; }
+  .chip { font-size: 0.74rem; border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; color: var(--muted); white-space: nowrap; }
+  .card { border: 1px solid rgba(251, 191, 36, 0.45); background: rgba(120, 72, 0, 0.18); border-radius: 10px; padding: 9px 10px; margin-top: 8px; }
+  .card.plain { border-color: rgba(125, 211, 252, 0.2); background: rgba(56, 189, 248, 0.05); }
+  .prog { height: 6px; border-radius: 6px; background: rgba(255, 255, 255, 0.08); margin-top: 6px; overflow: hidden; }
+  .prog > div { height: 100%; background: var(--blue); border-radius: 6px; transition: width 0.4s; }
+  .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
+  .stat { border: 1px solid rgba(125, 211, 252, 0.18); border-radius: 10px; padding: 8px 10px; }
+  .stat b { display: block; font-size: 1.25rem; font-weight: 650; }
+  .stat span { color: var(--muted); font-size: 0.74rem; }
+  .spark { grid-column: 1 / -1; }
+  .spark svg { display: block; width: 100%; height: 34px; margin-top: 4px; }
+  .spark rect { fill: var(--cyan); opacity: 0.8; }
+  .spark rect.hit { fill: transparent; opacity: 1; }
+  .spark rect.on { opacity: 1; fill: #e0f2fe; }
+  .topics { display: flex; flex-direction: column; gap: 5px; }
+  .topic { display: grid; grid-template-columns: 110px 1fr 28px; align-items: center; gap: 8px; font-size: 0.8rem; }
+  .topic .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .topic .b { height: 6px; border-radius: 0 4px 4px 0; background: var(--cyan); opacity: 0.8; }
+  .topic .n { color: var(--muted); text-align: right; }
+  .big { font-size: 2rem; font-weight: 700; line-height: 1; }
+
+  /* replay */
+  .replay { position: fixed; z-index: 15; left: 50%; transform: translateX(-50%);
+    bottom: calc(14px + env(safe-area-inset-bottom, 0px)); width: min(600px, calc(100% - 24px));
+    background: rgba(40, 18, 70, 0.86); border: 1px solid rgba(196, 181, 253, 0.6); border-radius: 14px;
+    padding: 10px 12px; backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px); }
+  .replay .lbl { font-size: 0.78rem; font-weight: 700; letter-spacing: 0.06em; color: #ddd6fe; display: flex; justify-content: space-between; gap: 8px; }
+  .replay input[type=range] { width: 100%; margin: 8px 0 6px; accent-color: #a78bfa; }
+  .replay .row { margin-top: 0; align-items: center; }
+  .replay .sp[aria-pressed="true"] { background: rgba(167, 139, 250, 0.35); border-color: #c4b5fd; }
+  body.replaying canvas { outline: 3px solid rgba(167, 139, 250, 0.55); outline-offset: -3px; }
+  .replay-tag { position: fixed; z-index: 9; top: calc(56px + env(safe-area-inset-top, 0px)); right: 12px; font-size: 0.75rem;
+    font-weight: 800; letter-spacing: 0.12em; color: #ede9fe; background: rgba(91, 33, 182, 0.7); border-radius: 6px; padding: 4px 8px; }
+
+  .resetv { position: fixed; z-index: 11; left: 50%; transform: translateX(-50%); top: calc(56px + env(safe-area-inset-top, 0px)); }
+  @media (max-width: 720px) { .resetv { top: calc(100px + env(safe-area-inset-top, 0px)); } }
+
+  .toast { position: fixed; left: 50%; transform: translateX(-50%); bottom: calc(90px + env(safe-area-inset-bottom, 0px));
+    background: #1b2133; border: 1px solid var(--line); padding: 10px 14px; border-radius: 10px; z-index: 40; font-size: 0.88rem; max-width: calc(100% - 32px); }
+  .toast.good { border-color: var(--green); } .toast.bad { border-color: var(--red); }
+  .modal { position: fixed; inset: 0; z-index: 50; background: rgba(0, 0, 0, 0.6); display: grid; place-items: center; padding: 16px; }
+  .modal .sheet { position: relative; inset: auto; width: min(720px, 100%); max-height: 85vh; border-radius: 14px; }
+  .modal pre { white-space: pre-wrap; overflow-wrap: anywhere; font: 0.86rem/1.5 ui-monospace, Consolas, monospace; margin: 10px 0 0; }
   .msg { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; color: var(--muted); }
+  .msg a { color: #a5b4fc; }
 </style>
 </head>
 <body>
 <div class="bar">
-  <h1>🏢 Brain HQ</h1>
-  <button id="refresh" type="button">Refresh</button>
+  <h1>🏢 <span class="name">Brain HQ</span><span class="live" id="live">connecting</span></h1>
+  <select id="quality" aria-label="Graphics quality">
+    <option value="low">Low</option><option value="medium">Medium</option><option value="high">High</option>
+  </select>
+  <button id="replayBtn" type="button" title="Replay today's activity">⟲ <span class="hide-sm">Replay today</span></button>
   <a class="btn" href="index.html">← App</a>
 </div>
+<button class="pill" id="pill" type="button" aria-expanded="false" aria-controls="boardSheet">Nothing needs you <span class="chev">▾</span></button>
+<button class="resetv" id="resetView" type="button" hidden>⤺ Reset view</button>
+<div class="replay-tag" id="replayTag" hidden>REPLAY</div>
+
+<section class="sheet" id="boardSheet" hidden aria-label="Status board"></section>
+<section class="sheet" id="agentSheet" hidden aria-label="Agent"></section>
+<section class="sheet" id="coreSheet" hidden aria-label="Memory core"></section>
+
+<div class="replay" id="replayBar" hidden>
+  <div class="lbl"><span id="replayClock">REPLAY · today</span><span id="replayNote">not live</span></div>
+  <input type="range" id="replaySlider" min="0" max="1000" value="0" aria-label="Replay position">
+  <div class="row">
+    <button id="replayPlay" type="button">▶ Play</button>
+    <button class="sp" data-speed="1" type="button" aria-pressed="true">1×</button>
+    <button class="sp" data-speed="4" type="button" aria-pressed="false">4×</button>
+    <button class="sp" data-speed="16" type="button" aria-pressed="false">16×</button>
+    <button id="replayExit" type="button" style="margin-left:auto">Back to live</button>
+  </div>
+</div>
+<div class="toast" id="toast" hidden role="status" aria-live="polite"></div>
 <div class="msg" id="msg" hidden></div>
 
 <script type="module">
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
+/* =====================================================================
+   Brain HQ — the crew's office.
+   Data: ONE load when the page opens (and again only after the
+   connection drops or the tab was hidden for a while), then Supabase
+   Realtime on agent_runs, orders, thoughts and llm_usage. No polling,
+   no AI calls. Buttons go to the crew function's "web" door, which runs
+   the same code as the Telegram buttons.
+   ===================================================================== */
 const $ = (id) => document.getElementById(id);
+const ts = (iso) => (iso ? Date.parse(iso) : NaN);
+const usd = (n) => '$' + (Number(n) || 0).toFixed((Number(n) || 0) < 0.1 ? 4 : 2);
+const clockOf = (ms) => new Date(ms).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const short = (s, n = 140) => { const c = String(s ?? '').replace(/\s+/g, ' ').trim(); return c.length > n ? c.slice(0, n - 1) + '…' : c; };
+const firstLine = (s) => String(s ?? '').split('\n').find((l) => l.trim()) || '';
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+function store(k, v) { try { if (v === undefined) return localStorage.getItem(k); localStorage.setItem(k, v); } catch { return null; } }
 
-/* ------------------------------------------------------------------ data */
-async function loadConfig() {
-  const text = await (await fetch('config.js', { cache: 'no-store' })).text();
-  const url = (text.match(/SUPABASE_URL\s*=\s*['"`]([^'"`]+)/) || [])[1];
-  const key = (text.match(/SUPABASE_ANON_KEY\s*=\s*['"`]([^'"`]+)/) || [])[1];
-  if (!url || !key) throw new Error('config.js is missing SUPABASE_URL or SUPABASE_ANON_KEY');
-  return { url, key };
+// Tiny DOM builder: text is always set as text, never as HTML (outputs are AI-written).
+function h(tag, props, ...kids) {
+  const el = document.createElement(tag);
+  for (const [k, v] of Object.entries(props || {})) {
+    if (v == null || v === false) continue;
+    if (k === 'class') el.className = v;
+    else if (k === 'style') el.style.cssText = v;
+    else if (k.startsWith('on')) el.addEventListener(k.slice(2), v);
+    else el.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of kids.flat(3)) if (c != null && c !== false) el.append(c instanceof Node ? c : String(c));
+  return el;
+}
+// Replace an element's content with any mix of nodes, text and (nested) lists.
+function fill(el, ...kids) {
+  el.replaceChildren(...kids.flat(3).filter((c) => c != null && c !== false).map((c) => (c instanceof Node ? c : String(c))));
+}
+let toastTimer;
+function toast(text, kind) {
+  const t = $('toast'); t.textContent = text; t.className = 'toast' + (kind ? ' ' + kind : ''); t.hidden = false;
+  clearTimeout(toastTimer); toastTimer = setTimeout(() => { t.hidden = true; }, kind === 'bad' ? 6000 : 3000);
 }
 
+/* ------------------------------------------------------------------ quality */
+const IS_PHONE = matchMedia('(pointer: coarse)').matches && Math.min(screen.width, screen.height) < 820;
+const QUALITY = {
+  low:    { pr: 1, bloom: false, particles: 60, trail: 3 },
+  medium: { pr: Math.min(devicePixelRatio, 1.5), bloom: true, bloomPr: 1, particles: 150, trail: 5 },
+  high:   { pr: Math.min(devicePixelRatio, 2), bloom: true, bloomPr: Math.min(devicePixelRatio, 2), particles: 320, trail: 8 },
+};
+let qName = store('hq.quality') || (IS_PHONE ? 'low' : 'medium');
+if (!QUALITY[qName]) qName = 'medium';
+let Q = QUALITY[qName];
+$('quality').value = qName;
+
 /* ------------------------------------------------------------------ scene */
-const renderer = new THREE.WebGLRenderer({ antialias: true });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+const renderer = new THREE.WebGLRenderer({ antialias: qName !== 'low', powerPreference: 'high-performance' });
+renderer.setPixelRatio(Q.pr);
 renderer.setSize(innerWidth, innerHeight);
 document.body.prepend(renderer.domElement);
 
@@ -65,21 +237,45 @@ scene.background = new THREE.Color(0x0b0d14);
 scene.fog = new THREE.Fog(0x0b0d14, 16, 30);
 
 const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
-const HOME = { pos: new THREE.Vector3(7.5, 5.6, 4.2), target: new THREE.Vector3(0, 1.3, -1.8) };
-camera.position.copy(HOME.pos);
+const HOME_TARGET = new THREE.Vector3(0, 1.5, -2.2);
+const HOME_OFFSET = new THREE.Vector3(7.5, 4.3, 6.4);
+function homePos() { return HOME_TARGET.clone().add(HOME_OFFSET.clone().multiplyScalar(camera.aspect < 0.8 ? 1.65 : 1)); }
+camera.position.copy(homePos());
 const controls = new OrbitControls(camera, renderer.domElement);
-controls.target.copy(HOME.target);
+controls.target.copy(HOME_TARGET);
 controls.enableDamping = true;
 controls.maxPolarAngle = Math.PI * 0.47;
-controls.minDistance = 3; controls.maxDistance = 18;
+controls.minDistance = 2.5; controls.maxDistance = 20;
 
-scene.add(new THREE.HemisphereLight(0x8090ff, 0x101018, 0.9));
+const HEMI_BASE = new THREE.Color(0x8090ff), AMBER_LIGHT = new THREE.Color(0xffb347);
+const hemi = new THREE.HemisphereLight(0x8090ff, 0x101018, 0.9); scene.add(hemi);
 const key = new THREE.DirectionalLight(0xffffff, 1.1); key.position.set(5, 9, 6); scene.add(key);
 
-// Room: floor with grid, back wall, side wall.
-const floor = new THREE.Mesh(new THREE.PlaneGeometry(22, 18), new THREE.MeshStandardMaterial({ color: 0x10131c, roughness: 0.9 }));
+// Floor: the same grid as before, drawn in a shader so a ripple can run across it.
+const floorMat = new THREE.ShaderMaterial({
+  uniforms: { uTime: { value: 0 }, uRipT: { value: -99 }, uRipO: { value: new THREE.Vector2(0, -5) }, uTint: { value: 0 } },
+  vertexShader: `varying vec2 vXZ; void main(){ vec4 w = modelMatrix * vec4(position, 1.0); vXZ = w.xz; gl_Position = projectionMatrix * viewMatrix * w; }`,
+  fragmentShader: `
+    uniform float uTime, uRipT, uTint; uniform vec2 uRipO; varying vec2 vXZ;
+    void main(){
+      vec2 g = abs(fract(vXZ - 0.5) - 0.5) / fwidth(vXZ);
+      float line = 1.0 - min(min(g.x, g.y), 1.0);
+      // linear colours (same look as the old lit floor + GridHelper)
+      vec3 col = vec3(0.0052, 0.0065, 0.0116) + line * vec3(0.012, 0.017, 0.042);
+      float age = uTime - uRipT;
+      if (age > 0.0 && age < 3.2) {
+        float d = abs(length(vXZ - uRipO) - age * 5.5);
+        float rip = exp(-d * d * 3.0) * (1.0 - age / 3.2);
+        col += rip * (0.01 + line * 0.35) * vec3(0.2, 0.5, 1.0);
+      }
+      col = mix(col, col * vec3(2.2, 1.3, 0.45), uTint * 0.5);
+      float fogF = smoothstep(16.0, 30.0, length(vXZ - cameraPosition.xz));
+      gl_FragColor = vec4(mix(col, vec3(0.0033, 0.004, 0.0070), fogF), 1.0);
+      #include <colorspace_fragment>
+    }`,
+});
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(22, 18), floorMat);
 floor.rotation.x = -Math.PI / 2; scene.add(floor);
-const grid = new THREE.GridHelper(22, 22, 0x2b3350, 0x1a2035); grid.position.y = 0.002; scene.add(grid);
 const wallMat = new THREE.MeshStandardMaterial({ color: 0x141826, roughness: 1 });
 const back = new THREE.Mesh(new THREE.PlaneGeometry(22, 9), wallMat); back.position.set(0, 4.5, -8); scene.add(back);
 const side = new THREE.Mesh(new THREE.PlaneGeometry(18, 9), wallMat); side.position.set(-11, 4.5, 1); side.rotation.y = Math.PI / 2; scene.add(side);
@@ -90,7 +286,7 @@ platform.position.set(0, 0.2, -5); scene.add(platform);
 const platformRim = new THREE.Mesh(new THREE.TorusGeometry(1.52, 0.025, 8, 64), new THREE.MeshBasicMaterial({ color: 0x6366f1 }));
 platformRim.rotation.x = Math.PI / 2; platformRim.position.set(0, 0.41, -5); scene.add(platformRim);
 
-/* ------------------------------------------------------------------ robots */
+/* ------------------------------------------------------------------ robots (unchanged shape) */
 // Shared geometries and materials (built once, reused by every robot).
 const G = {
   body: new THREE.LatheGeometry([
@@ -106,6 +302,12 @@ const G = {
   pad: new THREE.CircleGeometry(0.8, 40),
   desk: new THREE.BoxGeometry(1.2, 0.08, 0.6),
   leg: new THREE.BoxGeometry(0.06, 0.5, 0.06),
+  // new, for the live states and signals
+  scan: new THREE.SphereGeometry(0.05, 12, 8),
+  spark: new THREE.SphereGeometry(0.03, 8, 6),
+  hit: new THREE.CylinderGeometry(0.7, 0.7, 2.2, 10),
+  orb: new THREE.SphereGeometry(0.075, 14, 10),
+  burst: new THREE.RingGeometry(0.86, 1, 48),
 };
 const M = {
   body: new THREE.MeshStandardMaterial({ color: 0xd9dce8, metalness: 0.35, roughness: 0.35 }),
@@ -113,6 +315,8 @@ const M = {
   dark: new THREE.MeshStandardMaterial({ color: 0x2a2f40, metalness: 0.5, roughness: 0.5 }),
   desk: new THREE.MeshStandardMaterial({ color: 0x252b40, roughness: 0.7 }),
   gold: new THREE.MeshStandardMaterial({ color: 0xf5c542, metalness: 0.8, roughness: 0.3, emissive: 0x4a3500 }),
+  spark: new THREE.MeshBasicMaterial({ color: new THREE.Color(0xbfe3ff).multiplyScalar(1.8) }),
+  hit: new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, colorWrite: false }),
 };
 const BLUE = new THREE.Color(0x60a5fa);
 
@@ -194,6 +398,21 @@ function makeRobot(agent) {
   return root;
 }
 
+// Additions for live states. They sit beside the robot; its shape is untouched.
+function decorate(root) {
+  const u = root.userData;
+  u.scanMat = new THREE.MeshBasicMaterial({ color: BLUE.clone() });
+  u.scanner = new THREE.Mesh(G.scan, u.scanMat); u.scanner.visible = false; u.bob.add(u.scanner);
+  u.sparks = new THREE.Group(); u.sparks.position.y = 0.9; u.sparks.visible = false;
+  for (let i = 0; i < 3; i++) {
+    const s = new THREE.Mesh(G.spark, M.spark); const a = (i / 3) * Math.PI * 2;
+    s.position.set(Math.cos(a) * 0.78, (i - 1) * 0.28, Math.sin(a) * 0.78); u.sparks.add(s);
+  }
+  u.bob.add(u.sparks);
+  const hit = new THREE.Mesh(G.hit, M.hit); hit.position.y = 1.1; hit.userData.agentName = u.agent.name; root.add(hit);
+  u.hit = hit; u.state = 'idle'; u.flickerUntil = 0; u.wiggleAt = -1e9;
+}
+
 // Classroom seats: the King on his platform at the front, workers in rows facing him.
 const SEATS = {
   King: [0, 0.4, -5],
@@ -201,6 +420,7 @@ const SEATS = {
   Critic: [-2.2, 0, 1.6], Scout: [0, 0, 1.6], Fixer: [2.2, 0, 1.6],
 };
 const robots = new Map();
+const hitTargets = [];
 
 function addDesk(x, z) {
   const d = new THREE.Group();
@@ -212,131 +432,892 @@ function addDesk(x, z) {
 }
 
 function buildCrew(agents) {
+  let extra = 0;
   agents.forEach((a) => {
-    const seat = SEATS[a.name] || [Math.random() * 6 - 3, 0, 3.5];
+    const seat = SEATS[a.name] || [-3.3 + (extra++ % 4) * 2.2, 0, 4.2];
     const r = makeRobot(a);
+    decorate(r);
     r.position.set(seat[0], seat[1], seat[2]);
     if (a.name === 'King') { r.scale.setScalar(1.2); r.rotation.y = 0; }
     else { r.rotation.y = Math.PI; addDesk(seat[0], seat[2]); }
     if (a.name !== 'King') r.lookAt(SEATS.King[0], 0, SEATS.King[2]);
-    scene.add(r); robots.set(a.name, r);
+    scene.add(r); robots.set(a.name, r); hitTargets.push(r.userData.hit);
   });
 }
 
-/* ------------------------------------------------------------------ wall board */
+/* ------------------------------------------------------------------ wall board (3D) */
 const boardCanvas = document.createElement('canvas'); boardCanvas.width = 1024; boardCanvas.height = 576;
 const boardTex = new THREE.CanvasTexture(boardCanvas); boardTex.colorSpace = THREE.SRGBColorSpace;
-const board = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 2.025), new THREE.MeshBasicMaterial({ map: boardTex }));
-board.position.set(-3.6, 3.7, -7.95); scene.add(board);
-
-function drawBoard(rows, orders) {
+const board3d = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 2.025), new THREE.MeshBasicMaterial({ map: boardTex }));
+board3d.position.set(-3.6, 3.7, -7.95); scene.add(board3d); hitTargets.push(board3d);
+let boardKey = '';
+function drawBoard3d(states, need, ordersToday) {
+  const keyNow = JSON.stringify([states, need, ordersToday]);
+  if (keyNow === boardKey) return; boardKey = keyNow;
   const g = boardCanvas.getContext('2d');
   g.fillStyle = '#0d1424'; g.fillRect(0, 0, 1024, 576);
-  g.strokeStyle = '#3b4a7a'; g.lineWidth = 6; g.strokeRect(3, 3, 1018, 570);
+  g.strokeStyle = need ? '#b7791f' : '#3b4a7a'; g.lineWidth = 6; g.strokeRect(3, 3, 1018, 570);
   g.fillStyle = '#a5b4fc'; g.font = 'bold 40px sans-serif'; g.fillText('BRAIN HQ · STATUS', 32, 58);
   g.font = '30px sans-serif';
-  rows.forEach((r, i) => {
+  Object.entries(states).forEach(([name, s], i) => {
     const y = 110 + i * 46;
-    const color = { working: '#60a5fa', waiting_on_me: '#fbbf24', failed: '#f87171', queued: '#9aa0b4' }[r.state] || '#6b7280';
-    g.fillStyle = color; g.beginPath(); g.arc(44, y - 10, 10, 0, Math.PI * 2); g.fill();
-    g.fillStyle = '#e8eaf2'; g.fillText(r.name, 66, y);
-    g.fillStyle = '#9aa0b4'; g.fillText((r.state || 'idle').replace(/_/g, ' '), 290, y);
+    g.fillStyle = { working: '#60a5fa', thinking: '#a78bfa', waiting: '#fbbf24', failed: '#f87171', queued: '#93c5fd' }[s] || '#6b7280';
+    g.beginPath(); g.arc(44, y - 10, 10, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#e8eaf2'; g.fillText(name, 66, y);
+    g.fillStyle = '#9aa0b4'; g.fillText(STATE_WORD[s] || s, 290, y);
   });
-  g.fillStyle = '#9aa0b4'; g.fillText(`Orders today: ${orders}`, 600, 110);
+  g.fillStyle = need ? '#fbbf24' : '#93c5fd'; g.font = 'bold 44px sans-serif';
+  g.fillText(need ? `${need} need${need === 1 ? 's' : ''} you` : 'Nothing needs you', 560, 130);
+  g.fillStyle = '#9aa0b4'; g.font = '30px sans-serif'; g.fillText(`Orders today: ${ordersToday}`, 560, 186);
+  g.fillText('Tap for details', 560, 530);
   boardTex.needsUpdate = true;
 }
 
-/* ------------------------------------------------------------------ hand-off arcs */
+/* ------------------------------------------------------------------ memory core */
+const CORE_POS = new THREE.Vector3(-0.4, 4.6, -7.35);
+const glowTex = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
+  const gr = g.createRadialGradient(32, 32, 0, 32, 32, 32);
+  gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.35, 'rgba(255,255,255,0.35)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
+  g.fillStyle = gr; g.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c);
+})();
+const CORE_COLOR = new THREE.Color(0x7dd3fc), CORE_INNER = new THREE.Color(0xa78bfa);
+const core = new THREE.Group(); core.position.copy(CORE_POS); scene.add(core);
+const coreSpin = new THREE.Group(); core.add(coreSpin);
+const coreWireMat = new THREE.MeshBasicMaterial({ color: CORE_COLOR.clone(), wireframe: true, transparent: true, opacity: 0.9 });
+const coreWire = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1), coreWireMat); coreSpin.add(coreWire);
+const coreInnerMat = new THREE.MeshBasicMaterial({ color: CORE_INNER.clone(), wireframe: true, transparent: true, opacity: 0.7 });
+const coreInner = new THREE.Mesh(new THREE.IcosahedronGeometry(0.6, 0), coreInnerMat); core.add(coreInner);
+const coreGlowMat = new THREE.SpriteMaterial({ map: glowTex, color: 0x60a5fa, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+const coreGlow = new THREE.Sprite(coreGlowMat); coreGlow.scale.setScalar(2.4); core.add(coreGlow);
+const coreHaloMat = new THREE.MeshBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.35 });
+const coreHalo = new THREE.Mesh(new THREE.TorusGeometry(1.35, 0.02, 6, 64), coreHaloMat); coreHalo.rotation.x = 1.2; core.add(coreHalo);
+const coreHit = new THREE.Mesh(new THREE.SphereGeometry(2.2, 10, 8), M.hit); core.add(coreHit); hitTargets.push(coreHit);
+const CORE = { base: 0.3, phase: 0, period: 4.2, pulse: 0, spin: 0, bright: 0.8 };
+function coreSize(total) { return 0.3 * (0.8 + 0.5 * Math.min(1, total / 600)); }   // grows with your thoughts, capped
+function corePulse(k) { CORE.pulse = Math.max(CORE.pulse, k); CORE.spin += k * 4; }
+
+/* ------------------------------------------------------------------ signals: orbs, bursts, arcs */
+const ORB_BLUE = new THREE.Color(0x93c5fd).multiplyScalar(1.6);
+const ORB_GREEN = new THREE.Color(0x86efac).multiplyScalar(1.6);
+const ORB_RED = new THREE.Color(0xfca5a5).multiplyScalar(1.4);
+const ORB_GOLD = new THREE.Color(0xfde68a).multiplyScalar(1.6);
+const ORB_SPARK = new THREE.Color(0xa5f3fc).multiplyScalar(1.8);
+const MAX_TRAIL = 8;
+const orbs = Array.from({ length: 18 }, () => {
+  const parts = [];
+  for (let k = 0; k <= MAX_TRAIL; k++) {
+    const m = new THREE.Mesh(G.orb, new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending }));
+    m.visible = false; m.scale.setScalar(k ? 1 - k / (MAX_TRAIL + 2) : 1.15); scene.add(m); parts.push(m);
+  }
+  return { parts, active: false, curve: new THREE.QuadraticBezierCurve3(new THREE.Vector3(), new THREE.Vector3(), new THREE.Vector3()) };
+});
+let orbQueueAt = 0;
+function anchor(name) {
+  if (name === 'core') return CORE_POS.clone();
+  const r = robots.get(name); if (!r) return null;
+  return r.position.clone().add(new THREE.Vector3(0, 1.45 * r.scale.y + 0.06, 0));
+}
+function orb(from, to, color, onArrive, fromPoint) {
+  const p0 = fromPoint || anchor(from), p2 = anchor(to);
+  if (!p0 || !p2) return;
+  const o = orbs.find((x) => !x.active); if (!o) return;
+  const now = performance.now();
+  orbQueueAt = Math.max(now, Math.min(orbQueueAt + 140, now + 1500));   // several at once leave one after another
+  const p1 = p0.clone().lerp(p2, 0.5); p1.y += 1.2 + p0.distanceTo(p2) * 0.18;
+  o.curve.v0.copy(p0); o.curve.v1.copy(p1); o.curve.v2.copy(p2);
+  Object.assign(o, { active: true, start: orbQueueAt, dur: 900 + p0.distanceTo(p2) * 70, onArrive });
+  o.parts.forEach((m, k) => { m.material.color.copy(color); m.material.opacity = k ? 0.55 * (1 - k / (MAX_TRAIL + 1)) : 1; });
+}
+const tmpV = new THREE.Vector3();
+function animateOrbs(now) {
+  for (const o of orbs) {
+    if (!o.active) continue;
+    const p = (now - o.start) / o.dur;
+    if (p < 0) continue;
+    o.parts.forEach((m, k) => {
+      const q = p - k * 0.035;
+      m.visible = k <= Q.trail && q > 0 && q < 1;
+      if (m.visible) { o.curve.getPoint(q, tmpV); m.position.copy(tmpV); }
+    });
+    if (p >= 1 + Q.trail * 0.035) { o.active = false; o.parts.forEach((m) => { m.visible = false; }); if (o.onArrive) o.onArrive(); }
+  }
+}
+
+const bursts = Array.from({ length: 10 }, () => {
+  const m = new THREE.Mesh(G.burst, new THREE.MeshBasicMaterial({ color: new THREE.Color(0xc7e6ff).multiplyScalar(1.8), transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+  m.visible = false; scene.add(m); return { m, start: 0 };
+});
+function burst(name, color) {
+  const p = anchor(name); if (!p) return;
+  const b = bursts.find((x) => !x.m.visible) || bursts[0];
+  b.m.position.copy(p); b.start = performance.now(); b.m.visible = true;
+  b.m.material.color.copy(color || new THREE.Color(0xc7e6ff).multiplyScalar(1.8));
+}
+function animateBursts(now) {
+  for (const b of bursts) {
+    if (!b.m.visible) continue;
+    const p = (now - b.start) / 750;
+    if (p >= 1) { b.m.visible = false; continue; }
+    b.m.scale.setScalar(0.25 + p * 1.1); b.m.material.opacity = (1 - p) * (1 - p);
+    b.m.quaternion.copy(camera.quaternion);
+  }
+}
+
+// Hand-off arcs between consecutive steps of an order (kept from before).
 const arcs = [];
 function arcBetween(a, b, color = 0x8b9cff) {
-  const ra = robots.get(a), rb = robots.get(b);
-  if (!ra || !rb || ra === rb) return;
-  const p0 = ra.position.clone().add(new THREE.Vector3(0, 1.4 * ra.scale.y, 0));
-  const p2 = rb.position.clone().add(new THREE.Vector3(0, 1.4 * rb.scale.y, 0));
+  const p0 = anchor(a), p2 = anchor(b);
+  if (!p0 || !p2 || a === b) return;
   const p1 = p0.clone().lerp(p2, 0.5); p1.y += 1.6 + p0.distanceTo(p2) * 0.15;
   const geo = new THREE.BufferGeometry().setFromPoints(new THREE.QuadraticBezierCurve3(p0, p1, p2).getPoints(40));
   const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }));
   scene.add(line); arcs.push({ line, born: performance.now() });
 }
-
-/* ------------------------------------------------------------------ states */
-function applyState(name, state) {
-  const r = robots.get(name); if (!r) return;
-  const u = r.userData; u.state = state;
-  const c = state === 'waiting_on_me' ? 0xfbbf24 : state === 'failed' ? 0xf87171 : 0x60a5fa;
-  u.visorMat.color.setHex(c); u.ringMat.color.setHex(c); u.padMat.color.setHex(c);
-}
-
-let db = null;
-async function load() {
-  const since = new Date(); since.setHours(0, 0, 0, 0);
-  const [board, orders, runs] = await Promise.all([
-    db.from('agent_board').select('*'),
-    db.from('orders').select('id, status, created_at').gte('created_at', since.toISOString()),
-    db.from('agent_runs').select('id, order_id, seq, agent, status, created_at').gte('created_at', since.toISOString()).order('created_at'),
-  ]);
-  if (board.error) throw board.error;
-  const rows = board.data.map((b) => ({
-    name: b.name,
-    state: b.open_runs > 0 ? b.last_status : (b.last_status === 'failed' ? 'failed' : 'idle'),
-  }));
-  rows.forEach((r) => applyState(r.name, r.state));
-  drawBoard(rows, (orders.data || []).length);
-  // Hand-off arcs for the latest order: consecutive steps.
-  const latest = (orders.data || []).at(-1);
-  const steps = (runs.data || []).filter((r) => latest && r.order_id === latest.id).sort((a, b) => a.seq - b.seq);
-  for (let i = 1; i < steps.length; i++) arcBetween(steps[i - 1].agent, steps[i].agent);
-}
-
-/* ------------------------------------------------------------------ loop */
-const clock = new THREE.Clock();
-function frame() {
-  const t = clock.getElapsedTime(), now = performance.now();
-  robots.forEach((r) => {
-    const u = r.userData;
-    const working = u.state === 'working';
-    u.bob.position.y = Math.sin(t * 1.6 + u.phase) * 0.06 + 0.06;
-    u.ring.rotation.y += working ? 0.06 : 0.012;
-    u.tipMat.color.setHex(Math.sin(t * 3 + u.phase) > 0.6 ? 0xff6b6b : 0x5a1f1f);
-    if (u.item) u.item.rotation.y = Math.sin(t + u.phase) * 0.4;
-  });
+function animateArcs(now) {
   for (let i = arcs.length - 1; i >= 0; i--) {
     const a = arcs[i], age = (now - a.born) / 1000;
     a.line.material.opacity = Math.max(0, 0.9 - age / 8);
     if (age > 8) { scene.remove(a.line); a.line.geometry.dispose(); a.line.material.dispose(); arcs.splice(i, 1); }
   }
-  controls.update();
-  renderer.render(scene, camera);
 }
-renderer.setAnimationLoop(frame);
-addEventListener('resize', () => {
-  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
+
+function spark() {   // a new thought flies in from the edge of the room
+  const side = Math.random();
+  const from = side < 0.4 ? new THREE.Vector3(-10.5, 1 + Math.random() * 4, -4 + Math.random() * 9)
+    : side < 0.8 ? new THREE.Vector3(10.5, 1 + Math.random() * 4, -4 + Math.random() * 9)
+    : new THREE.Vector3(-6 + Math.random() * 12, 7.5, 6);
+  orb(null, 'core', ORB_SPARK, () => corePulse(1), from);
+}
+function ripple() {
+  floorMat.uniforms.uRipT.value = clockT;
+}
+
+/* ------------------------------------------------------------------ ambience: drifting particles */
+const PMAX = 320;
+const pPos = new Float32Array(PMAX * 3), pVel = new Float32Array(PMAX * 3);
+for (let i = 0; i < PMAX; i++) {
+  pPos[i * 3] = Math.random() * 20 - 10; pPos[i * 3 + 1] = Math.random() * 7 + 0.2; pPos[i * 3 + 2] = Math.random() * 14.5 - 7.5;
+  pVel[i * 3] = (Math.random() - 0.5) * 0.08; pVel[i * 3 + 1] = Math.random() * 0.06 + 0.02; pVel[i * 3 + 2] = (Math.random() - 0.5) * 0.08;
+}
+const pGeo = new THREE.BufferGeometry(); pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
+const particles = new THREE.Points(pGeo, new THREE.PointsMaterial({ size: 0.05, map: glowTex, color: 0x9ec5ff, transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending }));
+scene.add(particles);
+function animateParticles(dt, calm) {
+  const n = Q.particles, k = dt * (calm ? 0.3 : 1);
+  pGeo.setDrawRange(0, n);
+  for (let i = 0; i < n; i++) {
+    const j = i * 3;
+    pPos[j] += pVel[j] * k; pPos[j + 1] += pVel[j + 1] * k; pPos[j + 2] += pVel[j + 2] * k;
+    if (pPos[j + 1] > 7.4) pPos[j + 1] = 0.2;
+    if (pPos[j] > 10) pPos[j] = -10; else if (pPos[j] < -10) pPos[j] = 10;
+    if (pPos[j + 2] > 7) pPos[j + 2] = -7.5; else if (pPos[j + 2] < -7.5) pPos[j + 2] = 7;
+  }
+  pGeo.attributes.position.needsUpdate = true;
+}
+
+/* ------------------------------------------------------------------ data (Supabase) */
+const S = {
+  agents: new Map(), runs: new Map(), orders: new Map(), monthRuns: new Map(),
+  thoughts: [], usage: [], uid: null, lastActivity: performance.now(),
+  states: {}, tasks: {}, kingAmber: false, live: false,
+};
+let db = null;
+const PRI = { idle: 0, queued: 1, failed: 2, thinking: 3, working: 4, waiting: 5 };
+const STATE_WORD = { idle: 'idle', queued: 'in line', thinking: 'thinking', working: 'working', waiting: 'waiting on you', failed: 'failed' };
+const RUN_COLS = 'id, order_id, seq, agent, job, thought_id, status, task, output, error, tokens, cost, created_at, started_at, finished_at, updated_at, decision:proposal->>decision';
+const ORDER_COLS = 'id, request, status, plan, plan_text, total_cost, estimated_cost, created_at, approved_at, finished_at, error, report_thought_id';
+
+function startOfToday() { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); }
+function startOfMonth() { const d = new Date(); d.setDate(1); d.setHours(0, 0, 0, 0); return d.getTime(); }
+
+function normRun(r) {
+  const o = { ...r };
+  if ('proposal' in o) { o.decision = o.proposal && o.proposal.decision ? o.proposal.decision : null; delete o.proposal; }
+  if (o.output && o.output.length > 6000) o.output = o.output.slice(0, 6000) + '…';
+  return o;
+}
+function lightThought(r) {
+  return {
+    id: r.id, created_at: r.created_at, kind: r.kind, status: r.status, tags: r.tags || [],
+    summary: r.summary, title: r.title || (r.metadata && r.metadata.title) || short(firstLine(r.content), 90), section: r.section,
+  };
+}
+const visibleThought = (t) => t.status !== 'archived' && t.kind !== 'course_setup';
+
+async function loadAll() {
+  const since24 = new Date(Date.now() - 24 * 3600e3).toISOString();
+  const today = new Date(startOfToday()).toISOString();
+  const month = new Date(Math.min(startOfMonth(), Date.now() - 24 * 3600e3)).toISOString();
+  const [agents, runs, orders, thoughts, usage, monthRuns] = await Promise.all([
+    db.from('agents').select('name, role, symbol_key, item_key, model, active').eq('active', true),
+    db.from('agent_runs').select(RUN_COLS).or(`created_at.gte.${since24},status.in.(queued,working,waiting_on_me)`).order('created_at').limit(2000),
+    db.from('orders').select(ORDER_COLS).or(`created_at.gte.${today},status.in.(planning,awaiting_approval,running,waiting_on_me)`).order('created_at').limit(500),
+    db.from('thoughts').select('id, created_at, kind, status, tags, summary, section, title:metadata->>title').order('created_at', { ascending: false }).limit(10000),
+    db.from('llm_usage').select('cost_usd, created_at').gte('created_at', month).limit(20000),
+    db.from('agent_runs').select('id, agent, cost, created_at').gte('created_at', month).limit(20000),
+  ]);
+  for (const r of [agents, runs, orders, thoughts, usage, monthRuns]) if (r.error) throw r.error;
+  S.agents = new Map(agents.data.map((a) => [a.name, a]));
+  S.runs = new Map(runs.data.map((r) => [r.id, normRun(r)]));
+  S.orders = new Map(orders.data.map((o) => [o.id, o]));
+  S.thoughts = thoughts.data.map(lightThought);
+  S.usage = usage.data;
+  S.monthRuns = new Map(monthRuns.data.map((r) => [r.id, r]));
+}
+
+/* ------------------------------------------------------------------ derived state */
+function kingRunOf(orderId) {
+  for (const r of S.runs.values()) if (r.order_id === orderId && r.agent === 'King' && r.seq === 0) return r;
+  return null;
+}
+// What every agent is doing at time T. The same function drives live view and replay.
+function statesAt(T) {
+  const st = {}, task = {};
+  for (const name of S.agents.keys()) st[name] = 'idle';
+  const set = (name, s, what) => { if (!(name in st)) return; if (PRI[s] > PRI[st[name]]) { st[name] = s; task[name] = what; } };
+  for (const r of S.runs.values()) {
+    if (r.agent === 'King' && r.order_id && r.seq === 0) continue;    // the King's planning shows as "thinking"
+    const c = ts(r.created_at); if (!(c <= T)) continue;
+    const f = ts(r.finished_at), s0 = ts(r.started_at);
+    if (f <= T) { if (r.status === 'failed' && T - f < 10 * 60e3) set(r.agent, 'failed', r); continue; }
+    if (isNaN(f) && (r.status === 'done' || r.status === 'failed')) continue;
+    if (s0 <= T) set(r.agent, r.status === 'waiting_on_me' && ts(r.updated_at || r.started_at) <= T ? 'waiting' : 'working', r);
+    else set(r.agent, 'queued', r);
+  }
+  let kingAmber = false;
+  for (const o of S.orders.values()) {
+    const c = ts(o.created_at); if (!(c <= T)) continue;
+    const open = o.status === 'planning' || o.status === 'awaiting_approval';
+    const stop = o.approved_at ? ts(o.approved_at) : o.finished_at ? ts(o.finished_at) : open ? Infinity : c;
+    if (T >= stop) continue;
+    const kr = kingRunOf(o.id), planEnd = kr && kr.finished_at ? ts(kr.finished_at) : Infinity;
+    set('King', 'thinking', { task: 'Planning: ' + o.request, order_id: o.id });
+    if (T >= planEnd) kingAmber = true;
+  }
+  return { st, task, kingAmber };
+}
+
+function needsYou() {
+  const out = [];
+  for (const o of S.orders.values()) if (o.status === 'awaiting_approval') out.push({ kind: 'plan', order: o, agent: 'King' });
+  for (const r of S.runs.values()) {
+    if (r.status !== 'waiting_on_me') continue;
+    const order = S.orders.get(r.order_id);
+    if (r.agent === 'Fixer') out.push({ kind: 'fixer', run: r, order, agent: 'Fixer' });
+    else if (!out.some((x) => x.kind === 'cap' && x.order && order && x.order.id === order.id)) out.push({ kind: 'cap', run: r, order, agent: r.agent });
+  }
+  return out;
+}
+
+function applyStates(res) {
+  S.states = res.st; S.tasks = res.task; S.kingAmber = res.kingAmber;
+  robots.forEach((r, name) => {
+    const u = r.userData, s = res.st[name] || 'idle';
+    if (s === 'failed' && u.state !== 'failed') u.flickerUntil = performance.now() + 1400;
+    u.state = s; u.amber = name === 'King' && res.kingAmber;
+  });
+}
+
+/* ------------------------------------------------------------------ events → visuals */
+const savedSomething = (r) => !!r.thought_id || r.decision === 'approved';
+function prevStep(r) {
+  let best = null;
+  for (const x of S.runs.values()) if (x.order_id === r.order_id && x.seq === r.seq - 1 && (!best || ts(x.created_at) > ts(best.created_at))) best = x;
+  return best;
+}
+function fx(e) {
+  S.lastActivity = performance.now();
+  const r = e.run;
+  switch (e.type) {
+    case 'run_new': if (r.agent !== 'King') orb('King', r.agent, ORB_BLUE); break;
+    case 'run_start': if (r.order_id && r.seq > 1) { const p = prevStep(r); if (p) arcBetween(p.agent, r.agent); } break;
+    case 'run_end':
+      if (r.status === 'done') {
+        burst(r.agent);
+        if (savedSomething(r)) orb(r.agent, 'core', ORB_GREEN, () => corePulse(0.8));
+        else if (r.agent !== 'King') orb(r.agent, 'King', ORB_BLUE);
+      } else {
+        const u = robots.get(r.agent)?.userData; if (u) u.flickerUntil = performance.now() + 1400;
+        if (r.agent !== 'King') orb(r.agent, 'King', ORB_RED);
+      }
+      break;
+    case 'order_done': ripple(); burst('King', ORB_GOLD); break;
+    case 'report': orb('King', 'core', ORB_GOLD, () => corePulse(0.8)); break;
+    case 'thought': spark(); break;
+    case 'usage': corePulse(0.35); break;
+  }
+}
+function liveEvent(e) { S.lastActivity = performance.now(); if (!RP) fx(e); }
+
+function onRun(p) {
+  if (p.eventType === 'DELETE' || !p.new) return;
+  const row = normRun(p.new), prev = S.runs.get(row.id);
+  S.runs.set(row.id, prev ? { ...prev, ...row } : row);
+  S.monthRuns.set(row.id, { id: row.id, agent: row.agent, cost: row.cost, created_at: row.created_at });
+  if (!prev) liveEvent({ type: 'run_new', run: row });
+  if (row.status === 'working' && (!prev || prev.status !== 'working')) liveEvent({ type: 'run_start', run: row });
+  if ((row.status === 'done' || row.status === 'failed') && (!prev || prev.status !== row.status)) liveEvent({ type: 'run_end', run: row });
+  if (focusName === row.agent) mergeFocusRun(row);
+  changed();
+}
+function onOrder(p) {
+  if (p.eventType === 'DELETE' || !p.new) return;
+  const row = p.new, prev = S.orders.get(row.id);
+  S.orders.set(row.id, prev ? { ...prev, ...row } : row);
+  if (row.status === 'done' && (!prev || prev.status !== 'done')) liveEvent({ type: 'order_done', order: row });
+  if (row.report_thought_id && (!prev || !prev.report_thought_id)) liveEvent({ type: 'report', order: row });
+  if (!prev) S.lastActivity = performance.now();
+  changed();
+}
+function onThought(p) {
+  if (!p.new) return;
+  const t = lightThought(p.new);
+  if (S.thoughts.some((x) => x.id === t.id)) return;
+  S.thoughts.unshift(t);
+  if (visibleThought(t)) liveEvent({ type: 'thought' });
+  changed();
+}
+function onUsage(p) {
+  if (!p.new) return;
+  S.usage.push({ cost_usd: p.new.cost_usd, created_at: p.new.created_at });
+  liveEvent({ type: 'usage' });
+  changed();
+}
+
+let channel = null, subscribedOnce = false;
+function subscribe() {
+  const f = `user_id=eq.${S.uid}`;
+  channel = db.channel('brain-hq')
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'agent_runs', filter: f }, onRun)
+    .on('postgres_changes', { event: '*', schema: 'public', table: 'orders', filter: f }, onOrder)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'thoughts', filter: f }, onThought)
+    .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'llm_usage', filter: f }, onUsage)
+    .subscribe((status) => {
+      if (status === 'SUBSCRIBED') {
+        setLive(true);
+        if (subscribedOnce) reload();          // back after a drop: catch up once (not polling)
+        subscribedOnce = true;
+      } else if (status === 'CHANNEL_ERROR' || status === 'TIMED_OUT' || status === 'CLOSED') setLive(false);
+    });
+}
+function setLive(on) { S.live = on; $('live').className = 'live' + (on ? ' on' : ''); $('live').textContent = on ? 'live' : 'offline'; }
+async function reload() { try { await loadAll(); changed(); } catch (e) { console.error(e); } }
+
+/* ------------------------------------------------------------------ UI refresh (batched) */
+let uiPending = false;
+function changed() {
+  if (!RP) applyStates(statesAt(Date.now()));
+  S.needCount = needsYou().length;
+  if (uiPending) return; uiPending = true;
+  requestAnimationFrame(() => { uiPending = false; renderUI(); });
+}
+function renderUI() {
+  const need = needsYou();
+  const pill = $('pill');
+  pill.firstChild.textContent = need.length ? `${need.length} need${need.length === 1 ? 's' : ''} you ` : 'Nothing needs you ';
+  pill.classList.toggle('need', need.length > 0);
+  const states = {}; for (const name of S.agents.keys()) states[name] = S.states[name] || 'idle';
+  drawBoard3d(states, need.length, ordersToday().length);
+  if (!$('boardSheet').hidden) renderBoard();
+  if (!$('agentSheet').hidden) renderAgent();
+  if (!$('coreSheet').hidden) renderCore();
+  const total = S.thoughts.filter(visibleThought).length;
+  CORE.base = coreSize(total);
+}
+const ordersToday = () => [...S.orders.values()].filter((o) => ts(o.created_at) >= startOfToday());
+const monthCost = () => S.usage.filter((u) => ts(u.created_at) >= startOfMonth()).reduce((s, u) => s + (Number(u.cost_usd) || 0), 0);
+
+/* ------------------------------------------------------------------ actions (same as Telegram) */
+async function act(op, ids, btn) {
+  if (btn) btn.disabled = true;
+  try {
+    const res = await db.functions.invoke('crew', { body: { action: 'web', op, ...ids } });
+    if (res.error) {
+      let m = res.error.message;
+      try { const j = await res.error.context.json(); if (j && j.error) m = j.error; } catch { /* keep */ }
+      throw new Error(m);
+    }
+    const d = res.data || {};
+    toast(d.ok ? (d.toast || 'Done') : (d.toast || d.error || 'Not done'), d.ok ? 'good' : 'bad');
+  } catch (e) {
+    toast('Could not do it: ' + (e.message || e), 'bad');
+  } finally { if (btn) btn.disabled = false; }
+}
+function needCard(n) {
+  const b = (label, cls, op, ids) => h('button', { class: cls, type: 'button', onclick: (ev) => act(op, ids, ev.currentTarget) }, label);
+  if (n.kind === 'plan') {
+    const steps = (n.order.plan && n.order.plan.steps) || [];
+    return h('div', { class: 'card' },
+      h('div', null, '👑 Plan waiting for your OK'),
+      h('div', { class: 'preview' }, short(n.order.request, 200)),
+      h('div', { class: 'meta' }, `${steps.length} steps: ${steps.map((s) => s.agent).join(' → ')} · about ${usd(n.order.estimated_cost)}`),
+      h('div', { class: 'row' }, b('✅ Approve', 'ok', 'approve', { order_id: n.order.id }), b('✖️ Reject', 'no', 'cancel', { order_id: n.order.id }),
+        n.order.plan_text ? h('button', { type: 'button', onclick: () => openText('Plan', n.order.plan_text) }, 'Read plan') : null));
+  }
+  if (n.kind === 'fixer') {
+    return h('div', { class: 'card' },
+      h('div', null, '🔧 Fixer wants to change these'),
+      h('div', { class: 'preview' }, short(n.run.output || n.run.task, 260)),
+      h('div', { class: 'row' }, b('✅ Approve', 'ok', 'fixer_approve', { run_id: n.run.id }), b('✖️ Reject', 'no', 'fixer_reject', { run_id: n.run.id }),
+        n.run.output ? h('button', { type: 'button', onclick: () => openText('Fixer change list', n.run.output) }, 'Read all') : null));
+  }
+  return h('div', { class: 'card' },
+    h('div', null, '✋ Cost cap reached'),
+    h('div', { class: 'preview' }, short(n.order ? n.order.request : n.run.task, 200)),
+    h('div', { class: 'meta' }, n.order ? `Spent ${usd(n.order.total_cost)} so far` : ''),
+    n.order ? h('div', { class: 'row' }, b('▶ Go on', 'go', 'go_on', { order_id: n.order.id }), b('■ Stop', 'no', 'stop', { order_id: n.order.id })) : null);
+}
+
+/* ------------------------------------------------------------------ sheets */
+const SHEETS = ['boardSheet', 'agentSheet', 'coreSheet'];
+const narrow = () => innerWidth <= 720;
+function openSheet(id) {
+  if (narrow()) SHEETS.forEach((s) => { if (s !== id) $(s).hidden = true; });
+  else if (id !== 'boardSheet') ['agentSheet', 'coreSheet'].forEach((s) => { if (s !== id) $(s).hidden = true; });
+  $(id).hidden = false;
+  $('pill').setAttribute('aria-expanded', String(!$('boardSheet').hidden));
+}
+function closeSheet(id) {
+  $(id).hidden = true;
+  $('pill').setAttribute('aria-expanded', String(!$('boardSheet').hidden));
+  if (id === 'agentSheet' || id === 'coreSheet') resetView();
+}
+const header = (title, id, extra) => h('div', { class: 'head' }, h('h2', null, title), extra || null,
+  h('button', { class: 'x', type: 'button', 'aria-label': 'Close', onclick: () => closeSheet(id) }, '✕'));
+function openText(title, text) {
+  const m = h('div', { class: 'modal', onclick: (e) => { if (e.target === m) m.remove(); } },
+    h('section', { class: 'sheet' }, h('div', { class: 'head' }, h('h2', null, title),
+      h('button', { class: 'x', type: 'button', onclick: () => m.remove() }, '✕')), h('pre', null, text || '(empty)')));
+  document.body.append(m);
+}
+const runLine = (r) => h('li', null,
+  h('div', null, h('span', { class: 'dot s-' + (r.status === 'done' ? 'idle' : r.status === 'waiting_on_me' ? 'waiting' : r.status) }),
+    `${r.agent || ''}${r.agent ? ' · ' : ''}${short(r.task || r.job || '', 90)}`),
+  h('div', { class: 'meta' }, `${r.status.replace(/_/g, ' ')} · ${clockOf(ts(r.finished_at || r.updated_at || r.created_at))}` +
+    (Number(r.cost) ? ` · ${usd(r.cost)}` : '')),
+  r.error ? h('div', { class: 'preview', style: 'color:#fecaca' }, short(r.error, 160)) : null);
+
+/* ---- status board (overlay) ---- */
+function sparkline() {
+  const now = Date.now(), bins = new Array(24).fill(0);
+  for (const r of S.runs.values()) { const age = now - ts(r.created_at); if (age >= 0 && age < 24 * 3600e3) bins[23 - Math.floor(age / 3600e3)]++; }
+  const max = Math.max(1, ...bins), total = bins.reduce((a, b) => a + b, 0);
+  const W = 24 * 9, H = 30, NS = 'http://www.w3.org/2000/svg';
+  const svg = document.createElementNS(NS, 'svg'); svg.setAttribute('viewBox', `0 0 ${W} ${H + 2}`); svg.setAttribute('preserveAspectRatio', 'none');
+  svg.setAttribute('role', 'img'); svg.setAttribute('aria-label', `Runs per hour, last 24 hours: ${total} in total`);
+  const read = h('span', null, `${total} runs in the last 24 h`);
+  bins.forEach((n, i) => {
+    const bh = n ? Math.max(3, (n / max) * H) : 1;
+    const bar = document.createElementNS(NS, 'rect');
+    bar.setAttribute('x', i * 9); bar.setAttribute('width', 7); bar.setAttribute('y', H - bh + 1); bar.setAttribute('height', bh); bar.setAttribute('rx', n ? 2 : 0);
+    if (!n) bar.style.opacity = '0.25';
+    const hit = document.createElementNS(NS, 'rect');
+    hit.setAttribute('class', 'hit'); hit.setAttribute('x', i * 9 - 1); hit.setAttribute('width', 9); hit.setAttribute('y', 0); hit.setAttribute('height', H + 2);
+    const hourStart = now - (24 - i) * 3600e3;
+    const label = `${clockOf(hourStart)}–${clockOf(hourStart + 3600e3)}: ${n} run${n === 1 ? '' : 's'}`;
+    const title = document.createElementNS(NS, 'title'); title.textContent = label; hit.append(title);
+    hit.addEventListener('pointerenter', () => { bar.classList.add('on'); read.textContent = label; });
+    hit.addEventListener('pointerleave', () => { bar.classList.remove('on'); read.textContent = `${total} runs in the last 24 h`; });
+    svg.append(bar, hit);
+  });
+  return h('div', { class: 'stat spark' }, h('span', null, 'Activity, last 24 hours'), svg, h('span', null, read));
+}
+function renderBoard() {
+  const el = $('boardSheet'), need = needsYou();
+  const agentRows = [...S.agents.keys()].map((name) => {
+    const s = S.states[name] || 'idle', t = S.tasks[name];
+    return h('li', { style: 'cursor:pointer', onclick: () => focusAgent(name) },
+      h('span', { class: 'dot s-' + s }), h('b', null, name), ' ', h('span', { class: 'meta' }, STATE_WORD[s]),
+      t && t.task ? h('div', { class: 'meta' }, short(t.task, 80)) : null);
+  });
+  const active = [...S.orders.values()].filter((o) => ['running', 'waiting_on_me', 'planning', 'awaiting_approval'].includes(o.status));
+  const today = startOfToday();
+  const finished = [...S.runs.values()].filter((r) => (r.status === 'done' || r.status === 'failed') && r.finished_at)
+    .sort((a, b) => ts(b.finished_at) - ts(a.finished_at));
+  const errors = finished.filter((r) => r.status === 'failed' && ts(r.finished_at) >= today).slice(0, 5)
+    .concat([...S.orders.values()].filter((o) => o.status === 'failed' && ts(o.created_at) >= today).map((o) => ({ agent: 'Order', task: o.request, status: 'failed', error: o.error, finished_at: o.finished_at || o.created_at })));
+  const captures = S.thoughts.filter(visibleThought).slice(0, 5);
+  fill(el,
+    header('Status board', 'boardSheet', RP ? h('span', { class: 'chip' }, 'live data, not the replay') : null),
+    h('h3', null, need.length ? `Needs you (${need.length})` : 'Needs you'),
+    need.length ? need.map(needCard) : h('div', { class: 'empty' }, 'Nothing needs you right now.'),
+    h('h3', null, 'Agents'), h('ul', { class: 'list' }, agentRows),
+    h('h3', null, 'Active tasks'),
+    active.length ? h('ul', { class: 'list' }, active.map((o) => {
+      const steps = [...S.runs.values()].filter((r) => r.order_id === o.id && r.seq > 0);
+      const total = Math.max(((o.plan && o.plan.steps) || []).length, steps.length);
+      const done = steps.filter((r) => r.status === 'done').length;
+      return h('li', null, h('div', null, short(o.request, 90)),
+        h('div', { class: 'meta' }, `${o.status.replace(/_/g, ' ')} · ${total ? `${done} / ${total} steps` : 'planning'} · ${usd(o.total_cost)}`),
+        total ? h('div', { class: 'prog' }, h('div', { style: `width:${Math.round((done / total) * 100)}%` })) : null);
+    })) : h('div', { class: 'empty' }, 'No order is running.'),
+    h('h3', null, 'Last 5 completed'), finished.length ? h('ul', { class: 'list' }, finished.slice(0, 5).map(runLine)) : h('div', { class: 'empty' }, 'Nothing finished in the last 24 hours.'),
+    h('h3', null, 'Last 5 memory captures'), h('ul', { class: 'list' }, captures.map((t) => h('li', null, short(t.summary || t.title, 100),
+      h('div', { class: 'meta' }, `${(t.kind || 'unsorted').replace('_', ' ')} · ${new Date(ts(t.created_at)).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`)))),
+    h('h3', null, 'Errors today'), errors.length ? h('ul', { class: 'list' }, errors.slice(0, 5).map(runLine)) : h('div', { class: 'empty' }, 'No errors today.'),
+    h('h3', null, 'Numbers'),
+    h('div', { class: 'stats' },
+      h('div', { class: 'stat' }, h('b', null, String(ordersToday().length)), h('span', null, 'Orders today')),
+      h('div', { class: 'stat' }, h('b', null, usd(monthCost())), h('span', null, 'AI cost this month')),
+      sparkline()),
+  );
+}
+
+/* ---- agent panel ---- */
+let focusName = null, focusRuns = [];
+function mergeFocusRun(row) {
+  const i = focusRuns.findIndex((r) => r.id === row.id);
+  if (i >= 0) focusRuns[i] = { ...focusRuns[i], ...row }; else focusRuns.unshift(row);
+  focusRuns = focusRuns.slice(0, 5);
+}
+async function focusAgent(name) {
+  const r = robots.get(name); if (!r) return;
+  focusName = name; focusRuns = [];
+  r.userData.wiggleAt = performance.now();
+  const front = new THREE.Vector3(0, 0, 1).applyQuaternion(r.quaternion);
+  const rightV = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), front).normalize();
+  const target = r.position.clone().add(new THREE.Vector3(0, 1.1 * r.scale.y, 0));
+  const pos = target.clone().add(front.clone().multiplyScalar(3.4 * r.scale.y)).add(new THREE.Vector3(0, 1.0, 0)).add(rightV.clone().multiplyScalar(-1.2));
+  if (narrow()) target.y -= 0.75; else target.add(rightV.clone().multiplyScalar(-0.9));
+  flyTo(pos, target);
+  $('resetView').hidden = false;
+  openSheet('agentSheet'); renderAgent();
+  const res = db ? await db.from('agent_runs').select(RUN_COLS).eq('agent', name).order('created_at', { ascending: false }).limit(5)
+    : { data: [...S.runs.values()].filter((r) => r.agent === name) };   // demo mode
+  if (focusName !== name) return;
+  if (!res.error) focusRuns = res.data.map(normRun);
+  renderAgent();
+}
+function renderAgent() {
+  const name = focusName; if (!name) return;
+  const a = S.agents.get(name) || {}, s = S.states[name] || 'idle', cur = S.tasks[name];
+  const curOrder = cur && cur.order_id ? S.orders.get(cur.order_id) : null;
+  const mine = needsYou().filter((n) => n.agent === name || (curOrder && n.order && n.order.id === curOrder.id));
+  const monthStart = startOfMonth();
+  const cost = [...S.monthRuns.values()].filter((r) => r.agent === name && ts(r.created_at) >= monthStart).reduce((t, r) => t + (Number(r.cost) || 0), 0);
+  const lastOut = focusRuns.find((r) => r.output);
+  const controls = [];
+  if (curOrder && ['planning', 'awaiting_approval'].includes(curOrder.status)) {
+    controls.push(h('button', { class: 'no', type: 'button', onclick: (e) => act('cancel', { order_id: curOrder.id }, e.currentTarget) }, '✖️ Cancel this order'));
+  } else if (curOrder && curOrder.status === 'waiting_on_me' && !mine.some((n) => n.kind === 'cap')) {
+    controls.push(h('button', { class: 'no', type: 'button', onclick: (e) => act('stop', { order_id: curOrder.id }, e.currentTarget) }, '■ Stop this order'));
+  }
+  if (lastOut) controls.push(h('button', { type: 'button', onclick: () => openText(`${name}: last output`, lastOut.output) }, '📄 Open last output'));
+  controls.push(h('button', { type: 'button', onclick: () => closeSheet('agentSheet') }, '⤺ Reset view'));
+  fill($('agentSheet'),
+    header(`${SYMBOL[a.symbol_key] || ''} ${name}`, 'agentSheet', h('span', { class: 'chip' }, h('span', { class: 'dot s-' + s }), STATE_WORD[s])),
+    h('p', { class: 'sub' }, a.role || ''),
+    h('p', { class: 'sub' }, `Model: ${a.model || '?'} · This month: ${usd(cost)}`),
+    h('h3', null, 'Current task'),
+    h('div', { class: 'preview' }, cur ? short(cur.task || cur.job || '', 300) : 'Nothing right now.'),
+    curOrder && curOrder.status === 'running' ? h('div', { class: 'meta' }, 'A running order can only be stopped at its cost cap (same as Telegram).') : null,
+    mine.length ? [h('h3', null, 'Needs you'), mine.map(needCard)] : null,
+    h('div', { class: 'row' }, controls),
+    h('h3', null, 'Last 5 runs'),
+    focusRuns.length ? h('ul', { class: 'list' }, focusRuns.map((r) => h('li', null,
+      h('div', null, h('span', { class: 'dot s-' + (r.status === 'done' ? 'idle' : r.status === 'waiting_on_me' ? 'waiting' : r.status) }), short(r.task || r.job || '', 90)),
+      h('div', { class: 'meta' }, `${r.status.replace(/_/g, ' ')} · ${new Date(ts(r.created_at)).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · ${Number(r.tokens || 0).toLocaleString()} tokens · ${usd(r.cost)}`),
+      r.output ? h('div', { class: 'preview' }, short(r.output, 160)) : null,
+      r.error ? h('div', { class: 'preview', style: 'color:#fecaca' }, short(r.error, 160)) : null,
+      r.output ? h('button', { class: 'x', type: 'button', style: 'margin-top:4px', onclick: () => openText(`${name}: output`, r.output) }, 'Open') : null)))
+      : h('div', { class: 'empty' }, 'Loading…'),
+  );
+}
+
+/* ---- memory core panel ---- */
+function renderCore() {
+  const vis = S.thoughts.filter(visibleThought);
+  const week = vis.filter((t) => ts(t.created_at) >= Date.now() - 7 * 864e5).length;
+  const counts = new Map();
+  for (const t of vis) for (const tag of t.tags || []) { const k = String(tag).toLowerCase(); counts.set(k, (counts.get(k) || 0) + 1); }
+  const top = [...counts.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8), max = top.length ? top[0][1] : 1;
+  fill($('coreSheet'),
+    header('🧠 Memory core', 'coreSheet'),
+    h('div', { class: 'stats', style: 'margin-top:10px' },
+      h('div', { class: 'stat' }, h('b', { class: 'big' }, vis.length.toLocaleString()), h('span', null, 'Thoughts in total')),
+      h('div', { class: 'stat' }, h('b', { class: 'big' }, String(week)), h('span', null, 'Last 7 days'))),
+    h('h3', null, 'Last 5 captures'),
+    h('ul', { class: 'list' }, vis.slice(0, 5).map((t) => h('li', null, short(t.summary || t.title, 110),
+      h('div', { class: 'meta' }, `${(t.kind || 'unsorted').replace('_', ' ')} · ${new Date(ts(t.created_at)).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}`)))),
+    h('h3', null, 'Biggest topics'),
+    top.length ? h('div', { class: 'topics' }, top.map(([tag, n]) => h('div', { class: 'topic' },
+      h('span', { class: 't', title: tag }, tag), h('div', { class: 'b', style: `width:${Math.max(6, (n / max) * 100)}%` }), h('span', { class: 'n' }, String(n)))))
+      : h('div', { class: 'empty' }, 'No tags yet.'),
+    h('p', { class: 'sub', style: 'margin-top:12px' }, 'The core grows a little with every thought (it stops growing at 600).'),
+  );
+}
+
+/* ------------------------------------------------------------------ camera flights */
+let fly = null;
+function flyTo(pos, target, dur = 0.95) {
+  fly = { fp: camera.position.clone(), ft: controls.target.clone(), tp: pos, tt: target, t: 0, dur: reduceMotion ? 0.01 : dur };
+  controls.enabled = false;
+}
+function resetView() { focusName = null; $('resetView').hidden = true; flyTo(homePos(), HOME_TARGET.clone()); }
+function flyStep(dt) {
+  if (!fly) return;
+  fly.t = Math.min(1, fly.t + dt / fly.dur);
+  const e = fly.t < 0.5 ? 4 * fly.t ** 3 : 1 - (-2 * fly.t + 2) ** 3 / 2;
+  camera.position.lerpVectors(fly.fp, fly.tp, e); controls.target.lerpVectors(fly.ft, fly.tt, e);
+  if (fly.t >= 1) { fly = null; controls.enabled = true; }
+}
+
+/* ------------------------------------------------------------------ replay today */
+let RP = null;
+function buildTimeline(a, b) {
+  const ev = [], add = (t, e) => { if (t >= a && t <= b) ev.push({ ...e, t }); };
+  for (const r of S.runs.values()) {
+    add(ts(r.created_at), { type: 'run_new', run: r });
+    if (r.started_at) add(ts(r.started_at), { type: 'run_start', run: r });
+    if (r.finished_at && (r.status === 'done' || r.status === 'failed')) add(ts(r.finished_at), { type: 'run_end', run: r });
+  }
+  for (const o of S.orders.values()) if (o.status === 'done' && o.finished_at) add(ts(o.finished_at), { type: 'order_done', order: o });
+  for (const t of S.thoughts) if (visibleThought(t)) add(ts(t.created_at), { type: 'thought' });
+  for (const u of S.usage) add(ts(u.created_at), { type: 'usage' });
+  return ev.sort((x, y) => x.t - y.t);
+}
+function openReplay() {
+  const start = startOfToday(), end = Date.now();
+  RP = { ev: buildTimeline(start, end), i: 0, t: start, start, end, playing: false, speed: RP ? RP.speed : 1 };
+  document.body.classList.add('replaying');
+  $('replayBar').hidden = false; $('replayTag').hidden = false;
+  seek(start); setPlaying(true);
+}
+function closeReplay() {
+  RP = null; document.body.classList.remove('replaying');
+  $('replayBar').hidden = true; $('replayTag').hidden = true;
+  changed();
+}
+function seek(t) {
+  RP.t = t; RP.i = RP.ev.findIndex((e) => e.t > t); if (RP.i < 0) RP.i = RP.ev.length;
+  applyStates(statesAt(t)); replayLabel();
+}
+function setPlaying(on) { RP.playing = on; $('replayPlay').textContent = on ? '❚❚ Pause' : '▶ Play'; }
+function replayLabel(skipping) {
+  $('replayClock').textContent = `REPLAY · ${clockOf(RP.t)} today`;
+  $('replayNote').textContent = skipping ? 'skipping a quiet stretch' : `${RP.ev.length} events · not live`;
+  $('replaySlider').value = String(Math.round(((RP.t - RP.start) / Math.max(1, RP.end - RP.start)) * 1000));
+}
+function replayStep(dt) {
+  if (!RP.playing) return;
+  let next = RP.t + dt * 60000 * RP.speed;                 // 1× = one minute of the day per second
+  const upcoming = RP.ev[RP.i];
+  const busy = Object.values(S.states).some((s) => s === 'working' || s === 'thinking' || s === 'queued');
+  let skipping = false;
+  if (upcoming && !busy && upcoming.t - RP.t > 3 * 60000) { next = Math.max(next, upcoming.t - 15000); skipping = true; }
+  let shown = 0;
+  while (RP.i < RP.ev.length && RP.ev[RP.i].t <= next) { if (shown++ < 8) fx(RP.ev[RP.i]); RP.i++; }
+  RP.t = Math.min(next, RP.end);
+  applyStates(statesAt(RP.t)); replayLabel(skipping);
+  if (RP.t >= RP.end) setPlaying(false);
+}
+
+/* ------------------------------------------------------------------ bloom (Medium/High only, loaded on demand) */
+let composer = null, bloomLoading = null;
+async function ensureBloom() {
+  if (composer || bloomLoading) return bloomLoading;
+  bloomLoading = (async () => {
+    const [{ EffectComposer }, { RenderPass }, { UnrealBloomPass }, { OutputPass }] = await Promise.all([
+      import('three/addons/postprocessing/EffectComposer.js'), import('three/addons/postprocessing/RenderPass.js'),
+      import('three/addons/postprocessing/UnrealBloomPass.js'), import('three/addons/postprocessing/OutputPass.js'),
+    ]);
+    const c = new EffectComposer(renderer);
+    c.addPass(new RenderPass(scene, camera));
+    c.addPass(new UnrealBloomPass(new THREE.Vector2(innerWidth, innerHeight), 0.75, 0.45, 0.9));
+    c.addPass(new OutputPass());
+    composer = c; sizeAll();
+  })().catch((e) => { console.warn('Bloom unavailable:', e); });
+  return bloomLoading;
+}
+function sizeAll() {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix();
+  renderer.setPixelRatio(Q.pr); renderer.setSize(innerWidth, innerHeight);
+  if (composer) { composer.setPixelRatio(Q.bloomPr || 1); composer.setSize(innerWidth, innerHeight); }
+}
+function setQuality(name) {
+  qName = name; Q = QUALITY[name]; store('hq.quality', name);
+  sizeAll(); if (Q.bloom) ensureBloom();
+}
+
+/* ------------------------------------------------------------------ the frame loop */
+let clockT = 0, lastFrame = performance.now(), stateTimer = 0, tintCur = 0;
+const C = { blue: new THREE.Color(0x60a5fa), amber: new THREE.Color(0xfbbf24), red: new THREE.Color(0xf87171) };
+const VISOR_K = { idle: 0.62, queued: 0.8, thinking: 0.16, working: 1.9, waiting: 1.35, failed: 1.25 };
+const RING_SPEED = { idle: 0.5, queued: 0.8, thinking: 1.2, working: 5, waiting: 1, failed: 0.3 };
+const tmpC = new THREE.Color();
+
+function animateRobots(dt, now) {
+  robots.forEach((r) => {
+    const u = r.userData, s = u.state || 'idle', t = clockT;
+    const amber = s === 'waiting' || (s === 'thinking' && u.amber);
+    const col = amber ? C.amber : s === 'failed' ? C.red : C.blue;
+    u.visorMat.color.copy(col).multiplyScalar(VISOR_K[s]);
+    u.ringMat.color.copy(col).multiplyScalar(s === 'working' ? 1.7 : amber ? 1.2 : 0.9);
+    u.ring.rotation.y += dt * RING_SPEED[s];
+    // hover / bounce
+    let y = 0.06 + Math.sin(t * 1.2 + u.phase) * 0.045;
+    if (amber) y = 0.06 + Math.abs(Math.sin(t * 3.2 + u.phase)) * 0.13;
+    else if (s === 'working') y = 0.06 + Math.sin(t * 2.6 + u.phase) * 0.06;
+    // happy wiggle when clicked
+    const wa = (now - u.wiggleAt) / 1000;
+    if (wa < 0.9) { u.bob.rotation.z = Math.sin(wa * 28) * 0.14 * (1 - wa / 0.9); y += Math.sin((wa / 0.9) * Math.PI) * 0.18; }
+    else u.bob.rotation.z = 0;
+    u.bob.position.y = y;
+    // thinking: the visor shrinks to a small light scanning left and right
+    u.scanner.visible = s === 'thinking';
+    if (u.scanner.visible) {
+      const a = Math.sin(t * 3) * 0.95;
+      u.scanner.position.set(Math.sin(a) * 0.3, 1.38, Math.cos(a) * 0.3);
+      u.scanMat.color.copy(amber ? C.amber : C.blue).multiplyScalar(2.2);
+    }
+    // working: tiny sparks orbiting
+    u.sparks.visible = s === 'working';
+    if (u.sparks.visible) { u.sparks.rotation.y += dt * 3.2; u.sparks.children.forEach((c, i) => { c.position.y = (i - 1) * 0.28 + Math.sin(t * 4 + i) * 0.08; }); }
+    // floor pad
+    if (now < u.flickerUntil) { u.padMat.color.copy(C.red); u.padMat.opacity = Math.random() < 0.5 ? 0.55 : 0.08; }
+    else if (amber) { u.padMat.color.copy(C.amber); u.padMat.opacity = 0.12 + 0.24 * (0.5 + 0.5 * Math.sin(t * 3)); }
+    else if (s === 'failed') { u.padMat.color.copy(C.red); u.padMat.opacity = 0.14; }
+    else { u.padMat.color.copy(C.blue); u.padMat.opacity = s === 'working' ? 0.2 : 0.08; }
+    // as before: antenna blink and item sway
+    u.tipMat.color.setHex(Math.sin(t * 3 + u.phase) > 0.6 ? 0xff6b6b : 0x5a1f1f);
+    if (u.item) u.item.rotation.y = Math.sin(t + u.phase) * 0.4;
+  });
+}
+function animateCore(dt, busy, calm) {
+  const targetPeriod = busy ? 2.8 : calm ? 6.5 : 4.2, targetBright = busy ? 1.0 : calm ? 0.5 : 0.78;
+  CORE.period += (targetPeriod - CORE.period) * Math.min(1, dt * 0.8);
+  CORE.bright += (targetBright - CORE.bright) * Math.min(1, dt * 0.8);
+  CORE.phase += (dt * Math.PI * 2) / CORE.period;
+  const b = Math.sin(CORE.phase);
+  core.scale.setScalar(CORE.base * (1 + 0.06 * b + 0.25 * CORE.pulse));
+  coreWireMat.color.copy(CORE_COLOR).multiplyScalar(CORE.bright + 0.22 * b + 1.6 * CORE.pulse);
+  coreInnerMat.color.copy(CORE_INNER).multiplyScalar(0.6 + 0.2 * b + CORE.pulse);
+  coreGlowMat.opacity = Math.min(1, 0.22 + 0.12 * b + 0.18 * CORE.bright + 0.6 * CORE.pulse);
+  coreHaloMat.opacity = 0.2 + 0.15 * CORE.bright + 0.4 * CORE.pulse;
+  coreSpin.rotation.y += dt * ((calm ? 0.1 : 0.2) + CORE.spin);
+  coreSpin.rotation.x += dt * 0.05;
+  coreInner.rotation.y -= dt * (0.3 + CORE.spin * 0.5);
+  coreHalo.rotation.z += dt * 0.4;
+  CORE.pulse *= Math.exp(-dt * 2.4); CORE.spin *= Math.exp(-dt * 1.6);
+}
+
+function frame() {
+  const now = performance.now();
+  const dt = Math.min(0.1, (now - lastFrame) / 1000); lastFrame = now; clockT += dt;
+  if (RP) replayStep(dt);
+  else if ((stateTimer += dt) > 2) { stateTimer = 0; applyStates(statesAt(Date.now())); }   // lets "failed" fade after 10 min
+  const states = Object.values(S.states);
+  const busy = states.some((s) => s === 'working' || s === 'thinking');
+  const calm = !busy && now - S.lastActivity > 60000;
+  const needTint = RP ? states.some((s) => s === 'waiting') || S.kingAmber : S.needCount > 0;
+  tintCur += ((needTint ? 1 : 0) - tintCur) * Math.min(1, dt * 1.5);
+  hemi.color.copy(HEMI_BASE).lerp(AMBER_LIGHT, tintCur * 0.45);
+  floorMat.uniforms.uTint.value = tintCur; floorMat.uniforms.uTime.value = clockT;
+  animateRobots(dt, now); animateOrbs(now); animateBursts(now); animateArcs(now);
+  animateCore(dt, busy, calm); animateParticles(dt, calm); flyStep(dt);
+  controls.update();
+  if (Q.bloom && composer) composer.render(); else renderer.render(scene, camera);
+}
+
+// Pause rendering when the tab is hidden; catch up once when it comes back after a while.
+let hiddenAt = 0;
+function startLoop() { lastFrame = performance.now(); renderer.setAnimationLoop(frame); }
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) { hiddenAt = Date.now(); renderer.setAnimationLoop(null); }
+  else { startLoop(); if (db && S.uid && Date.now() - hiddenAt > 60000) reload(); }
+});
+addEventListener('resize', sizeAll);
+
+/* ------------------------------------------------------------------ picking */
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2();
+let downAt = null;
+renderer.domElement.addEventListener('pointerdown', (e) => { downAt = { x: e.clientX, y: e.clientY }; });
+renderer.domElement.addEventListener('pointerup', (e) => {
+  if (!downAt || Math.hypot(e.clientX - downAt.x, e.clientY - downAt.y) > 6) return;
+  ndc.set((e.clientX / innerWidth) * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
+  ray.setFromCamera(ndc, camera);
+  const hit = ray.intersectObjects(hitTargets, false)[0];
+  if (!hit) return;
+  if (hit.object === coreHit) { corePulse(0.5); openSheet('coreSheet'); renderCore(); flyTo(CORE_POS.clone().add(new THREE.Vector3(1.6, -0.6, 4.6)), CORE_POS.clone().add(new THREE.Vector3(narrow() ? 0 : 0.9, narrow() ? -0.9 : 0, 0))); $('resetView').hidden = false; }
+  else if (hit.object === board3d) toggleBoard(true);
+  else if (hit.object.userData.agentName) focusAgent(hit.object.userData.agentName);
+});
+function toggleBoard(forceOpen) {
+  if ($('boardSheet').hidden || forceOpen) { openSheet('boardSheet'); renderBoard(); } else closeSheet('boardSheet');
+}
+
+/* ------------------------------------------------------------------ wiring */
+$('pill').addEventListener('click', () => toggleBoard());
+$('resetView').addEventListener('click', () => { $('agentSheet').hidden = true; $('coreSheet').hidden = true; resetView(); });
+$('quality').addEventListener('change', (e) => setQuality(e.target.value));
+$('replayBtn').addEventListener('click', () => { if (RP) closeReplay(); else openReplay(); });
+$('replayExit').addEventListener('click', closeReplay);
+$('replayPlay').addEventListener('click', () => { if (RP.t >= RP.end) seek(RP.start); setPlaying(!RP.playing); });
+$('replaySlider').addEventListener('input', (e) => { seek(RP.start + (Number(e.target.value) / 1000) * (RP.end - RP.start)); });
+document.querySelectorAll('.sp').forEach((b) => b.addEventListener('click', () => {
+  RP.speed = Number(b.dataset.speed);
+  document.querySelectorAll('.sp').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+}));
+addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  const m = document.querySelector('.modal'); if (m) { m.remove(); return; }
+  for (const id of ['agentSheet', 'coreSheet', 'boardSheet']) if (!$(id).hidden) { closeSheet(id); return; }
 });
 
 /* ------------------------------------------------------------------ start */
+async function loadConfig() {
+  const text = await (await fetch('config.js', { cache: 'no-store' })).text();
+  const url = (text.match(/SUPABASE_URL\s*=\s*['"`]([^'"`]+)/) || [])[1];
+  const key = (text.match(/SUPABASE_ANON_KEY\s*=\s*['"`]([^'"`]+)/) || [])[1];
+  if (!url || !key) throw new Error('config.js is missing SUPABASE_URL or SUPABASE_ANON_KEY');
+  return { url, key };
+}
 const DEMO_AGENTS = [
   ['King', 'crown', 'orb'], ['Librarian', 'books', 'book'], ['Tutor', 'bulb', 'card'], ['Reviewer', 'lens', 'lens'],
   ['Writer', 'pen', 'pen'], ['Critic', 'check', 'clipboard'], ['Scout', 'radar', null], ['Fixer', 'wrench', null],
-].map(([name, symbol_key, item_key]) => ({ name, symbol_key, item_key, role: '', model: 'claude-haiku-5-5', active: true }));
+].map(([name, symbol_key, item_key]) => ({ name, symbol_key, item_key, role: 'Sample agent (demo)', model: 'claude-haiku-5-5', active: true }));
+
+function runDemo() {   // ?demo: sample crew and fake events, no login and no data (for checking the look)
+  S.agents = new Map(DEMO_AGENTS.map((a) => [a.name, a]));
+  buildCrew(DEMO_AGENTS);
+  const now = Date.now(), iso = (m) => new Date(now - m * 60000).toISOString();
+  const o = { id: 'o1', request: 'Demo: make me a study plan for Chem 113', status: 'awaiting_approval', plan: { steps: [{ agent: 'Librarian' }, { agent: 'Tutor' }, { agent: 'Critic' }] }, estimated_cost: 0.011, total_cost: 0.002, created_at: iso(3) };
+  S.orders.set(o.id, o);
+  S.runs.set('k', { id: 'k', order_id: 'o1', seq: 0, agent: 'King', status: 'done', task: 'Plan', created_at: iso(3), started_at: iso(3), finished_at: iso(2), cost: 0.002 });
+  S.runs.set('w', { id: 'w', agent: 'Writer', status: 'working', task: 'Draft the study guide', created_at: iso(1), started_at: iso(1), cost: 0 });
+  S.runs.set('f', { id: 'f', order_id: 'o2', agent: 'Fixer', status: 'waiting_on_me', task: 'Fix transcripts', output: '1. Re-capture /t_1234abcd …', created_at: iso(5), started_at: iso(5), updated_at: iso(4), cost: 0.001 });
+  S.runs.set('c', { id: 'c', agent: 'Critic', status: 'failed', task: 'Check the draft', error: 'Demo failure', created_at: iso(2), started_at: iso(2), finished_at: iso(1), cost: 0.001 });
+  for (let i = 0; i < 64; i++) S.thoughts.push({ id: 't' + i, created_at: iso(i * 300), kind: i % 3 ? 'my_thought' : 'source', tags: [['chemistry', 'sleep', 'public speaking', 'investing'][i % 4]], summary: `Demo thought ${i + 1}` });
+  S.uid = 'demo'; setLive(false); $('live').textContent = 'demo';
+  changed();
+  const demoEvents = [
+    () => fx({ type: 'run_new', run: { agent: 'Librarian' } }), () => fx({ type: 'thought' }),
+    () => fx({ type: 'run_end', run: { agent: 'Tutor', status: 'done', thought_id: 'x' } }), () => fx({ type: 'usage' }),
+    () => fx({ type: 'order_done' }), () => { arcBetween('Librarian', 'Writer'); fx({ type: 'run_end', run: { agent: 'Reviewer', status: 'done' } }); },
+  ];
+  let i = 0; setInterval(() => { if (!document.hidden) demoEvents[i++ % demoEvents.length](); }, 1800);
+  const open = new URLSearchParams(location.search).get('open');
+  if (open === 'board') toggleBoard(true);
+  if (open === 'agent') focusAgent('Fixer');
+  if (open === 'core') { openSheet('coreSheet'); renderCore(); }
+  if (open === 'replay') openReplay();
+}
 
 (async () => {
-  if (new URLSearchParams(location.search).has('demo')) {   // sample crew, no login, no data
-    buildCrew(DEMO_AGENTS);
-    applyState('Writer', 'working'); applyState('Fixer', 'waiting_on_me'); applyState('Critic', 'failed');
-    drawBoard(DEMO_AGENTS.map((a) => ({ name: a.name, state: robots.get(a.name).userData.state })), 2);
-    arcBetween('Librarian', 'Writer');
-    return;
-  }
+  setQuality(qName);
+  startLoop();
+  if (new URLSearchParams(location.search).has('demo')) { runDemo(); return; }
   try {
     const cfg = await loadConfig();
     db = window.supabase.createClient(cfg.url, cfg.key);
     const { data } = await db.auth.getSession();
-    if (!data.session) { $('msg').hidden = false; $('msg').innerHTML = 'Sign in first in the <a href="index.html" style="color:#a5b4fc">app</a>, then come back.'; return; }
-    const agents = await db.from('agents').select('name, role, symbol_key, item_key, model, active').eq('active', true);
-    if (agents.error) throw agents.error;
-    buildCrew(agents.data);
-    await load();
-    $('refresh').onclick = () => load().catch(console.error);
+    if (!data.session) { $('msg').hidden = false; $('msg').replaceChildren('Sign in first in the ', h('a', { href: 'index.html' }, 'app'), ', then come back.'); return; }
+    S.uid = data.session.user.id;
+    await loadAll();
+    buildCrew([...S.agents.values()]);
+    changed();
+    subscribe();
   } catch (e) {
     console.error(e); $('msg').hidden = false; $('msg').textContent = 'Could not load Brain HQ: ' + (e.message || e);
   }

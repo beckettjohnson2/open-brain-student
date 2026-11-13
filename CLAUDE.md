@@ -170,6 +170,14 @@ built and what's next.
   Capture functions have an internal `preview: true` refill mode (read, don't
   save) that the Fixer uses to show before/after sizes. Test helper calls:
   crew `{action: "scan"}` (read-only capture check), `{action: "show", order}`.
+- **Brain HQ (`hq.html`):** the 3D office. Loads once at open, then Supabase
+  Realtime on `agent_runs`, `orders`, `thoughts`, `llm_usage` (publication
+  `supabase_realtime`); no polling, no AI calls. Its buttons call crew
+  `{action: "web", op: approve|cancel|go_on|stop|fixer_approve|fixer_reject}`
+  with the owner's login token (checked against `OWNER_USER_ID`); that path
+  runs `orderButton` / `fixerDecision`, nothing else. Robot shape is fixed:
+  never change `makeRobot`. Rollback tag: `hq-classic-v1`. `hq.html?demo`
+  renders a sample crew without login (`&open=board|agent|core|replay`).
 - **Chunking:** at most `CHUNKS_PER_CALL` (3) chunks per call, each saved with
   its progress in `chunk_progress` (next_index/total, last_error, stalls).
   CONTINUE replies at once and works after the reply. RESUME restarts every

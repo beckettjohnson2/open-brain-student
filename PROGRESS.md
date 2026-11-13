@@ -1,6 +1,22 @@
 # Progress
 
-_Last updated: November 12, 2026 (night)_
+_Last updated: November 12, 2026 (late night)_
+
+> **Nov 12 (late night): Brain HQ, the live 3D office (not pushed yet).**
+> `hq.html` (the **🏢 Brain HQ** button in the app) shows the crew as robots
+> in a classroom: the King on his platform at the front, the workers in rows
+> facing him. The plain version is saved as git tag `hq-classic-v1` (roll back:
+> `git checkout hq-classic-v1 -- hq.html`). On top of it, everything is live
+> from your real data:
+> - **Robot states:** idle, thinking (the King planning), working, waiting on you, failed, and a burst when a step finishes.
+> - **Signals:** orbs from the King to each worker and back (or into the memory core when a step saved something), plus the hand-off arcs.
+> - **Memory core:** grows with your thought count, breathes, and pulses on every new thought and every AI call. Tap it for numbers, latest captures and top topics.
+> - **The room:** drifting particles, calm after 60 s without activity, an amber tint while something waits on you, and a floor ripple when an order completes.
+> - **Status board:** collapsible, with **Approve / Reject** (the same code as the Telegram buttons).
+> - **Agent panels and replay:** tap a robot for its panel; **Replay today** plays back the day's activity.
+> - **Quality:** Low/Medium/High (Low on phones). Rendering pauses when the tab is hidden.
+>
+> Costs nothing extra: one load when the page opens, then Supabase Realtime (switched on for `agent_runs`, `orders`, `thoughts`, `llm_usage` by `migrations/2026-11-16-hq-realtime.sql`). No polling and no AI calls.
 
 > **Nov 12 (night, recheck): all passing, not pushed yet.** Rechecked: all 9
 > functions refuse callers without the secret; both 15-minute jobs succeed;
@@ -133,6 +149,7 @@ _Last updated: November 12, 2026 (night)_
 | **Send to King** (Nov 12) | Messages that read like an instruction to the bot ("Delete that", "Look up the videos and add them", "Can you…") get **Save as note / Send to King** instead of being saved | Telegram |
 | **Run log** (Nov 12) | `agents` (8 agents with symbol/item keys for the 3D office), `orders`, `agent_runs` (every step and background job: queued → working → done / failed / waiting on me, with task, output, tokens, cost). Every AI call is tied to a run; run, order and receipt totals match | `select * from agent_board;` · `select * from agent_runs order by created_at desc limit 20;` |
 | **Show more** (Nov 12) | `/t_` shows long thoughts 3,500 characters at a time with a **Show more** button | Tap a `/t_` link to a long video |
+| **Brain HQ** (Nov 12) | Live 3D office of the crew (`hq.html`). Robot states, orbs, hand-off arcs, memory core, status board with Approve / Reject, agent panels, Replay today. Data: one load at open + Realtime; no polling, no AI calls. The buttons call crew `{action: "web"}`, which accepts only your login and runs the same code as the Telegram buttons (and tells Telegram "From Brain HQ: …") | App → **🏢 Brain HQ**. `hq.html?demo` shows a sample crew without signing in |
 | **Reliable chunking** (Nov 11) | Long thoughts are chunked in small resumable steps (max 3 chunks per call, each saved with its progress in `chunk_progress`). Every 15 minutes `resume-chunking` restarts anything unfinished; after 3 checks with no progress you get a Telegram message (once) | `select * from chunk_progress where done_at is null;` |
 
 ## Maintenance scripts
@@ -159,7 +176,9 @@ _Last updated: November 12, 2026 (night)_
 - The crew's Critic is strict: in all 3 drafting tests it sent the first draft back once (each order cost about 1.5× its estimate). The revised drafts passed.
 - YouTube won't tell Supabase how long a video is, so the Fixer can't compare a transcript with the video's length. Instead it flags punctuated transcripts that stop mid-sentence and re-reads those. The AI-trading video's transcript ends "…trading harder. I", but re-reading gave the same text, so the video's own captions end there.
 - Instruction detection is a word rule: "can you…", "please…", or an order verb (delete, find, look up, archive…) aimed at the bot ("that", "the videos", "my notes") or 3 words or fewer. Tested on 13 messages: notes like "Remember to email my lab partner", "Fix my sleep schedule" and "Find a study group" save normally. If a real note ever gets the two buttons, tap Save as note.
-- You can't approve an order from Claude Desktop, on purpose: approval only happens in Telegram.
+- You can't approve an order from Claude Desktop, on purpose: approval only happens in Telegram or in Brain HQ (signed in as you).
+- Brain HQ: a running order can only be stopped at its cost cap (same as Telegram). After approving in HQ, the old Telegram plan message still shows its buttons; tapping them says "Already running".
+- Brain HQ's live view skips events that happen while the page is closed; when you open it (or come back after more than a minute), it reloads once. Replay covers today from the runs in the last 24 hours.
 
 ## Retrieval scores
 
@@ -176,6 +195,7 @@ _Last updated: November 12, 2026 (night)_
 | Nov 12 | Harder cases added (16 search, 7 Ask) + English Veritasium | 14/16 | 16/16 | 7/7 (#15 vague phrasing: rank 5) |
 | Nov 12 | Filler words left out of keyword matching | 16/16 | 16/16 | 7/7 (#7 rank 4 → 1, #15 rank 5 → 1) |
 | Nov 12 | Agent crew + run log (Ask now logs as Librarian runs) | 16/16 | 16/16 | 7/7 |
+| Nov 12 | Brain HQ + Realtime (no search change) | 16/16 | 16/16 | 7/7 |
 
 Cases 1–10 are easy and mostly catch regressions. Cases 11–14 check details only found deep inside long items (chunks); 15–16 use vague wording. All 16 rank 1–3 now; add new cases whenever a real search disappoints you.
 
@@ -194,6 +214,18 @@ Cases 1–10 are easy and mostly catch regressions. Cases 11–14 check details 
 
 1. **Old "paste the video link" messages**: all 3 videos are filled now. Ignore those bot messages (replying would only re-read the same video).
 2. **Goals**: done. 5 active, 11 dropped (`/mygoals` to change).
+
+## How to test Brain HQ
+
+**Laptop:** open the app, sign in, click **🏢 Brain HQ**.
+1. You see the classroom and the memory core above the King. The pill (top left) says "Nothing needs you" or "N need you".
+2. Click the pill: the status board opens. Click a robot: the camera flies to it, it wiggles, and its panel opens. **Reset view** flies back. Click the glowing orb: the memory core panel.
+3. In Telegram, send `/king make me 3 quiz questions on projectile motion`. In HQ the King's visor becomes a small scanning light (thinking), then turns amber, the room gets a faint amber tint, and the pill says "1 needs you".
+4. Approve it from the HQ status board. Orbs fly from the King to each worker; each one works (bright visor, fast ring, sparks), arcs connect the steps, and at the end the floor ripples. Telegram gets "From Brain HQ: Approved…" and later the result as usual.
+5. Send any note to the bot: a spark flies into the memory core and it pulses.
+6. Click **Replay today**, then 16×: today's activity plays back, labelled REPLAY. **Back to live** ends it.
+
+**Phone (installed app):** open it, tap **🏢 Brain HQ**. Quality starts at Low. Panels open as bottom sheets. Rotate it with one finger and pinch to zoom. Switch away and back: it pauses and catches up.
 
 ## How to test the crew on your phone
 
@@ -232,7 +264,7 @@ Cases 1–10 are easy and mostly catch regressions. Cases 11–14 check details 
 
 ## What's next
 
-1. **The 3D office** (next session): it reads only `agents` (symbol_key, item_key), `agent_board`, `orders` and `agent_runs`. Row-level security already lets your login read your own rows.
+1. **Brain HQ:** test it on your laptop and phone (see "How to test Brain HQ"), then tell me what feels off (camera angle, speed, colours). Done: classic office (tag `hq-classic-v1`) + live upgrade.
 2. Tune the agents' prompts after a week of orders (they're in the `agents` table; the output format stays in code, so editing a prompt can't break the pipeline).
 3. Add a new test case whenever a real search or answer disappoints you (copy the question and the thought it should find into `tests/retrieval-cases.txt`).
 4. After a week of Helpful/Wrong taps: decide whether Haiku is good enough or Ask should move to Sonnet 5.5 (about 1–2¢ per question).

@@ -1275,13 +1275,63 @@ async function resume() {
 }
 
 // ---------------------------------------------------------------------------
-// The front door (internal only)
+// Brain HQ (hq.html): the SAME buttons as Telegram, for the signed-in owner.
+// The page sends the owner's login token. Only these actions exist here:
+// Approve / Cancel a plan, Go on / Stop at the cost cap, Approve / Reject a
+// Fixer change list. Each one runs the exact Telegram code path (orderButton,
+// fixerDecision) with all its checks; nothing else is reachable.
+// ---------------------------------------------------------------------------
+const CORS = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+}
+const WEB_BUTTONS: Record<string, string> = { approve: 'a', cancel: 'c', go_on: 'g', stop: 'x' }
+
+async function webAction(req: Request, body: Record<string, unknown>) {
+  const token = (req.headers.get('authorization') ?? '').replace(/^Bearer\s+/i, '').trim()
+  if (!token || token === ANON_KEY) return { status: 401, body: { ok: false, error: 'Sign in first.' } }
+  const { data, error } = await db.auth.getUser(token)
+  if (error || !data?.user || data.user.id !== OWNER_USER_ID) {
+    return { status: 403, body: { ok: false, error: 'Only the owner can do this.' } }
+  }
+  const op = String(body.op ?? '')
+  let result: { ok: boolean; toast?: string; text?: string }
+  let what = ''
+  if (WEB_BUTTONS[op]) {
+    const order = await loadOrder(String(body.order_id ?? ''))
+    if (!order) return { status: 404, body: { ok: false, error: 'Order not found.' } }
+    result = await orderButton(order.id, WEB_BUTTONS[op])
+    what = `"${shorten(order.request, 80)}" /o_${shortOf(order.id)}`
+  } else if (op === 'fixer_approve' || op === 'fixer_reject') {
+    result = await fixerDecision(String(body.run_id ?? ''), op === 'fixer_approve')
+    what = 'the Fixer’s change list'
+  } else {
+    return { status: 400, body: { ok: false, error: 'Unknown action.' } }
+  }
+  // Keep the Telegram chat in step (only ever the owner's own chat).
+  if (result.ok) await notify(`\u{1F3E2} From Brain HQ: ${result.toast ?? op} · ${what}`)
+  return { status: 200, body: { ok: result.ok, toast: result.toast ?? '' } }
+}
+
+// ---------------------------------------------------------------------------
+// The front door (internal only, except the Brain HQ buttons above)
 // ---------------------------------------------------------------------------
 Deno.serve(async (req) => {
-  const denied = rejectUnlessInternal(req)
-  if (denied) return denied
+  if (req.method === 'OPTIONS') return new Response('ok', { headers: CORS })
   if (!OWNER_USER_ID) return json({ error: 'OWNER_USER_ID is not set' }, 500)
   const body = await req.json().catch(() => ({}))
+  if (body?.action === 'web') {
+    try {
+      const r = await webAction(req, body)
+      return new Response(JSON.stringify(r.body), { status: r.status, headers: { ...CORS, 'Content-Type': 'application/json' } })
+    } catch (e) {
+      console.error('crew web error:', e)
+      return new Response(JSON.stringify({ ok: false, error: String(e) }), { status: 500, headers: { ...CORS, 'Content-Type': 'application/json' } })
+    }
+  }
+  const denied = rejectUnlessInternal(req)
+  if (denied) return denied
   try {
     switch (body?.action) {
       case 'plan':
