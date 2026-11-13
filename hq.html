@@ -1,0 +1,346 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Brain HQ</title>
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#0b0d14">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="icon" type="image/png" href="icon-192.png">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script type="importmap">
+{ "imports": {
+  "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+  "three/addons/": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/"
+} }
+</script>
+<style>
+  :root { --bg: #0b0d14; --text: #e8eaf2; --muted: #9aa0b4; --line: #2a2f40; --accent: #6366f1; }
+  html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); overflow: hidden;
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+  canvas { display: block; touch-action: none; }
+  .bar { position: fixed; top: calc(10px + env(safe-area-inset-top, 0px)); left: 12px; right: 12px;
+    display: flex; gap: 8px; align-items: center; z-index: 5; pointer-events: none; }
+  .bar > * { pointer-events: auto; }
+  .bar h1 { font-size: 1rem; margin: 0 auto 0 0; font-weight: 700; text-shadow: 0 1px 6px #000; }
+  button, a.btn { font: inherit; font-size: 0.85rem; color: var(--text); background: rgba(20,24,36,0.8);
+    border: 1px solid var(--line); border-radius: 999px; padding: 8px 14px; min-height: 36px; cursor: pointer;
+    text-decoration: none; display: inline-flex; align-items: center; }
+  .msg { position: fixed; inset: 0; display: grid; place-items: center; text-align: center; padding: 24px; color: var(--muted); }
+</style>
+</head>
+<body>
+<div class="bar">
+  <h1>🏢 Brain HQ</h1>
+  <button id="refresh" type="button">Refresh</button>
+  <a class="btn" href="index.html">← App</a>
+</div>
+<div class="msg" id="msg" hidden></div>
+
+<script type="module">
+import * as THREE from 'three';
+import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+const $ = (id) => document.getElementById(id);
+
+/* ------------------------------------------------------------------ data */
+async function loadConfig() {
+  const text = await (await fetch('config.js', { cache: 'no-store' })).text();
+  const url = (text.match(/SUPABASE_URL\s*=\s*['"`]([^'"`]+)/) || [])[1];
+  const key = (text.match(/SUPABASE_ANON_KEY\s*=\s*['"`]([^'"`]+)/) || [])[1];
+  if (!url || !key) throw new Error('config.js is missing SUPABASE_URL or SUPABASE_ANON_KEY');
+  return { url, key };
+}
+
+/* ------------------------------------------------------------------ scene */
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setSize(innerWidth, innerHeight);
+document.body.prepend(renderer.domElement);
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0d14);
+scene.fog = new THREE.Fog(0x0b0d14, 16, 30);
+
+const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
+const HOME = { pos: new THREE.Vector3(7.5, 5.6, 4.2), target: new THREE.Vector3(0, 1.3, -1.8) };
+camera.position.copy(HOME.pos);
+const controls = new OrbitControls(camera, renderer.domElement);
+controls.target.copy(HOME.target);
+controls.enableDamping = true;
+controls.maxPolarAngle = Math.PI * 0.47;
+controls.minDistance = 3; controls.maxDistance = 18;
+
+scene.add(new THREE.HemisphereLight(0x8090ff, 0x101018, 0.9));
+const key = new THREE.DirectionalLight(0xffffff, 1.1); key.position.set(5, 9, 6); scene.add(key);
+
+// Room: floor with grid, back wall, side wall.
+const floor = new THREE.Mesh(new THREE.PlaneGeometry(22, 18), new THREE.MeshStandardMaterial({ color: 0x10131c, roughness: 0.9 }));
+floor.rotation.x = -Math.PI / 2; scene.add(floor);
+const grid = new THREE.GridHelper(22, 22, 0x2b3350, 0x1a2035); grid.position.y = 0.002; scene.add(grid);
+const wallMat = new THREE.MeshStandardMaterial({ color: 0x141826, roughness: 1 });
+const back = new THREE.Mesh(new THREE.PlaneGeometry(22, 9), wallMat); back.position.set(0, 4.5, -8); scene.add(back);
+const side = new THREE.Mesh(new THREE.PlaneGeometry(18, 9), wallMat); side.position.set(-11, 4.5, 1); side.rotation.y = Math.PI / 2; scene.add(side);
+
+// King's platform at the front.
+const platform = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.6, 0.4, 40), new THREE.MeshStandardMaterial({ color: 0x1e2336, metalness: 0.3, roughness: 0.6 }));
+platform.position.set(0, 0.2, -5); scene.add(platform);
+const platformRim = new THREE.Mesh(new THREE.TorusGeometry(1.52, 0.025, 8, 64), new THREE.MeshBasicMaterial({ color: 0x6366f1 }));
+platformRim.rotation.x = Math.PI / 2; platformRim.position.set(0, 0.41, -5); scene.add(platformRim);
+
+/* ------------------------------------------------------------------ robots */
+// Shared geometries and materials (built once, reused by every robot).
+const G = {
+  body: new THREE.LatheGeometry([
+    [0, 0], [0.55, 0], [0.58, 0.07], [0.54, 0.22], [0.46, 0.5], [0.38, 0.8], [0.32, 1.0], [0.29, 1.08], [0, 1.1],
+  ].map(([x, y]) => new THREE.Vector2(x, y)), 40),
+  head: new THREE.SphereGeometry(0.3, 32, 20),
+  visor: new THREE.SphereGeometry(0.305, 32, 8, Math.PI / 2 - 1.2, 2.4, 1.32, 0.42),
+  stalk: new THREE.CylinderGeometry(0.018, 0.018, 0.24, 8),
+  tip: new THREE.SphereGeometry(0.05, 12, 10),
+  chest: new THREE.PlaneGeometry(0.3, 0.3),
+  dash: new THREE.BoxGeometry(0.11, 0.035, 0.05),
+  ringBase: new THREE.TorusGeometry(0.5, 0.012, 6, 48),
+  pad: new THREE.CircleGeometry(0.8, 40),
+  desk: new THREE.BoxGeometry(1.2, 0.08, 0.6),
+  leg: new THREE.BoxGeometry(0.06, 0.5, 0.06),
+};
+const M = {
+  body: new THREE.MeshStandardMaterial({ color: 0xd9dce8, metalness: 0.35, roughness: 0.35 }),
+  head: new THREE.MeshStandardMaterial({ color: 0xeef0f7, metalness: 0.3, roughness: 0.3 }),
+  dark: new THREE.MeshStandardMaterial({ color: 0x2a2f40, metalness: 0.5, roughness: 0.5 }),
+  desk: new THREE.MeshStandardMaterial({ color: 0x252b40, roughness: 0.7 }),
+  gold: new THREE.MeshStandardMaterial({ color: 0xf5c542, metalness: 0.8, roughness: 0.3, emissive: 0x4a3500 }),
+};
+const BLUE = new THREE.Color(0x60a5fa);
+
+const SYMBOL = { crown: '👑', books: '📚', bulb: '💡', lens: '🔍', pen: '🖊️', check: '✅', radar: '📡', wrench: '🔧' };
+const symbolTex = {};
+function symbolTexture(key) {
+  if (symbolTex[key]) return symbolTex[key];
+  const c = document.createElement('canvas'); c.width = c.height = 128;
+  const g = c.getContext('2d');
+  g.fillStyle = '#1b2030'; g.beginPath(); g.arc(64, 64, 60, 0, Math.PI * 2); g.fill();
+  g.font = '76px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(SYMBOL[key] || '●', 64, 70);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
+  return (symbolTex[key] = t);
+}
+
+// Equipment items, one small mesh group per item_key.
+function makeItem(key) {
+  const g = new THREE.Group();
+  const glow = new THREE.MeshStandardMaterial({ color: 0x9db4ff, emissive: 0x3050ff, emissiveIntensity: 0.8 });
+  if (key === 'orb') g.add(new THREE.Mesh(new THREE.SphereGeometry(0.12, 20, 14), glow));
+  else if (key === 'book') { const b = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 0.07), new THREE.MeshStandardMaterial({ color: 0x8b3a3a })); g.add(b); }
+  else if (key === 'card') { const b = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.15, 0.015), new THREE.MeshStandardMaterial({ color: 0xfff3c4 })); g.add(b); }
+  else if (key === 'lens') {
+    const r = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.018, 8, 24), M.dark); g.add(r);
+    const h = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.16, 8), M.dark); h.position.set(0.09, -0.12, 0); h.rotation.z = 0.7; g.add(h);
+  } else if (key === 'pen') {
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.26, 8), new THREE.MeshStandardMaterial({ color: 0x3b82f6 })); p.rotation.z = 0.4; g.add(p);
+  } else if (key === 'clipboard') {
+    g.add(new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.3, 0.02), new THREE.MeshStandardMaterial({ color: 0x9a6b3f })));
+    const clip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.04, 0.03), M.dark); clip.position.y = 0.15; g.add(clip);
+  } else return null;
+  return g;
+}
+
+function makeRobot(agent) {
+  const root = new THREE.Group();        // stays on the floor
+  const bob = new THREE.Group();         // hovers
+  root.add(bob);
+  const visorMat = new THREE.MeshBasicMaterial({ color: BLUE.clone() });
+  const ringMat = new THREE.MeshBasicMaterial({ color: BLUE.clone() });
+  const tipMat = new THREE.MeshBasicMaterial({ color: 0xff6b6b });
+  const padMat = new THREE.MeshBasicMaterial({ color: BLUE.clone(), transparent: true, opacity: 0.12, depthWrite: false });
+
+  bob.add(new THREE.Mesh(G.body, M.body));
+  const head = new THREE.Mesh(G.head, M.head); head.position.y = 1.38; bob.add(head);
+  const visor = new THREE.Mesh(G.visor, visorMat); visor.position.y = 1.38; bob.add(visor);
+  const stalk = new THREE.Mesh(G.stalk, M.dark); stalk.position.y = 1.78; bob.add(stalk);
+  const tip = new THREE.Mesh(G.tip, tipMat); tip.position.y = 1.92; bob.add(tip);
+  const chest = new THREE.Mesh(G.chest, new THREE.MeshBasicMaterial({ map: symbolTexture(agent.symbol_key), transparent: true }));
+  chest.position.set(0, 0.72, 0.425); chest.rotation.x = -0.27; bob.add(chest);
+
+  const ring = new THREE.Group(); ring.position.y = 0.34;
+  const ringBase = new THREE.Mesh(G.ringBase, ringMat); ringBase.rotation.x = Math.PI / 2; ring.add(ringBase);
+  for (let i = 0; i < 14; i++) {
+    const d = new THREE.Mesh(G.dash, ringMat);
+    const a = (i / 14) * Math.PI * 2;
+    d.position.set(Math.cos(a) * 0.53, 0, Math.sin(a) * 0.53); d.rotation.y = -a + Math.PI / 2;
+    ring.add(d);
+  }
+  bob.add(ring);
+
+  const item = makeItem(agent.item_key);
+  if (item) { item.position.set(0.62, 0.62, 0.12); bob.add(item); }
+
+  const pad = new THREE.Mesh(G.pad, padMat); pad.rotation.x = -Math.PI / 2; pad.position.y = 0.01; root.add(pad);
+
+  if (agent.name === 'King') {
+    const crown = new THREE.Group();
+    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.22, 0.1, 20, 1, true), M.gold); crown.add(band);
+    for (let i = 0; i < 5; i++) {
+      const s = new THREE.Mesh(new THREE.ConeGeometry(0.04, 0.12, 6), M.gold);
+      const a = (i / 5) * Math.PI * 2; s.position.set(Math.cos(a) * 0.2, 0.1, Math.sin(a) * 0.2); crown.add(s);
+    }
+    crown.position.y = 1.66; bob.add(crown);
+    stalk.visible = false; tip.position.y = 1.86;
+  }
+  root.userData = { agent, bob, head, visor, visorMat, ring, ringMat, tip, tipMat, pad, padMat, item, phase: Math.random() * 6 };
+  return root;
+}
+
+// Classroom seats: the King on his platform at the front, workers in rows facing him.
+const SEATS = {
+  King: [0, 0.4, -5],
+  Librarian: [-3.3, 0, -1.2], Tutor: [-1.1, 0, -1.2], Reviewer: [1.1, 0, -1.2], Writer: [3.3, 0, -1.2],
+  Critic: [-2.2, 0, 1.6], Scout: [0, 0, 1.6], Fixer: [2.2, 0, 1.6],
+};
+const robots = new Map();
+
+function addDesk(x, z) {
+  const d = new THREE.Group();
+  const top = new THREE.Mesh(G.desk, M.desk); top.position.y = 0.5; d.add(top);
+  for (const [lx, lz] of [[-0.55, -0.25], [0.55, -0.25], [-0.55, 0.25], [0.55, 0.25]]) {
+    const l = new THREE.Mesh(G.leg, M.desk); l.position.set(lx, 0.25, lz); d.add(l);
+  }
+  d.position.set(x, 0, z - 0.95); scene.add(d);
+}
+
+function buildCrew(agents) {
+  agents.forEach((a) => {
+    const seat = SEATS[a.name] || [Math.random() * 6 - 3, 0, 3.5];
+    const r = makeRobot(a);
+    r.position.set(seat[0], seat[1], seat[2]);
+    if (a.name === 'King') { r.scale.setScalar(1.2); r.rotation.y = 0; }
+    else { r.rotation.y = Math.PI; addDesk(seat[0], seat[2]); }
+    if (a.name !== 'King') r.lookAt(SEATS.King[0], 0, SEATS.King[2]);
+    scene.add(r); robots.set(a.name, r);
+  });
+}
+
+/* ------------------------------------------------------------------ wall board */
+const boardCanvas = document.createElement('canvas'); boardCanvas.width = 1024; boardCanvas.height = 576;
+const boardTex = new THREE.CanvasTexture(boardCanvas); boardTex.colorSpace = THREE.SRGBColorSpace;
+const board = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 2.025), new THREE.MeshBasicMaterial({ map: boardTex }));
+board.position.set(-3.6, 3.7, -7.95); scene.add(board);
+
+function drawBoard(rows, orders) {
+  const g = boardCanvas.getContext('2d');
+  g.fillStyle = '#0d1424'; g.fillRect(0, 0, 1024, 576);
+  g.strokeStyle = '#3b4a7a'; g.lineWidth = 6; g.strokeRect(3, 3, 1018, 570);
+  g.fillStyle = '#a5b4fc'; g.font = 'bold 40px sans-serif'; g.fillText('BRAIN HQ · STATUS', 32, 58);
+  g.font = '30px sans-serif';
+  rows.forEach((r, i) => {
+    const y = 110 + i * 46;
+    const color = { working: '#60a5fa', waiting_on_me: '#fbbf24', failed: '#f87171', queued: '#9aa0b4' }[r.state] || '#6b7280';
+    g.fillStyle = color; g.beginPath(); g.arc(44, y - 10, 10, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#e8eaf2'; g.fillText(r.name, 66, y);
+    g.fillStyle = '#9aa0b4'; g.fillText((r.state || 'idle').replace(/_/g, ' '), 290, y);
+  });
+  g.fillStyle = '#9aa0b4'; g.fillText(`Orders today: ${orders}`, 600, 110);
+  boardTex.needsUpdate = true;
+}
+
+/* ------------------------------------------------------------------ hand-off arcs */
+const arcs = [];
+function arcBetween(a, b, color = 0x8b9cff) {
+  const ra = robots.get(a), rb = robots.get(b);
+  if (!ra || !rb || ra === rb) return;
+  const p0 = ra.position.clone().add(new THREE.Vector3(0, 1.4 * ra.scale.y, 0));
+  const p2 = rb.position.clone().add(new THREE.Vector3(0, 1.4 * rb.scale.y, 0));
+  const p1 = p0.clone().lerp(p2, 0.5); p1.y += 1.6 + p0.distanceTo(p2) * 0.15;
+  const geo = new THREE.BufferGeometry().setFromPoints(new THREE.QuadraticBezierCurve3(p0, p1, p2).getPoints(40));
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color, transparent: true, opacity: 0.9 }));
+  scene.add(line); arcs.push({ line, born: performance.now() });
+}
+
+/* ------------------------------------------------------------------ states */
+function applyState(name, state) {
+  const r = robots.get(name); if (!r) return;
+  const u = r.userData; u.state = state;
+  const c = state === 'waiting_on_me' ? 0xfbbf24 : state === 'failed' ? 0xf87171 : 0x60a5fa;
+  u.visorMat.color.setHex(c); u.ringMat.color.setHex(c); u.padMat.color.setHex(c);
+}
+
+let db = null;
+async function load() {
+  const since = new Date(); since.setHours(0, 0, 0, 0);
+  const [board, orders, runs] = await Promise.all([
+    db.from('agent_board').select('*'),
+    db.from('orders').select('id, status, created_at').gte('created_at', since.toISOString()),
+    db.from('agent_runs').select('id, order_id, seq, agent, status, created_at').gte('created_at', since.toISOString()).order('created_at'),
+  ]);
+  if (board.error) throw board.error;
+  const rows = board.data.map((b) => ({
+    name: b.name,
+    state: b.open_runs > 0 ? b.last_status : (b.last_status === 'failed' ? 'failed' : 'idle'),
+  }));
+  rows.forEach((r) => applyState(r.name, r.state));
+  drawBoard(rows, (orders.data || []).length);
+  // Hand-off arcs for the latest order: consecutive steps.
+  const latest = (orders.data || []).at(-1);
+  const steps = (runs.data || []).filter((r) => latest && r.order_id === latest.id).sort((a, b) => a.seq - b.seq);
+  for (let i = 1; i < steps.length; i++) arcBetween(steps[i - 1].agent, steps[i].agent);
+}
+
+/* ------------------------------------------------------------------ loop */
+const clock = new THREE.Clock();
+function frame() {
+  const t = clock.getElapsedTime(), now = performance.now();
+  robots.forEach((r) => {
+    const u = r.userData;
+    const working = u.state === 'working';
+    u.bob.position.y = Math.sin(t * 1.6 + u.phase) * 0.06 + 0.06;
+    u.ring.rotation.y += working ? 0.06 : 0.012;
+    u.tipMat.color.setHex(Math.sin(t * 3 + u.phase) > 0.6 ? 0xff6b6b : 0x5a1f1f);
+    if (u.item) u.item.rotation.y = Math.sin(t + u.phase) * 0.4;
+  });
+  for (let i = arcs.length - 1; i >= 0; i--) {
+    const a = arcs[i], age = (now - a.born) / 1000;
+    a.line.material.opacity = Math.max(0, 0.9 - age / 8);
+    if (age > 8) { scene.remove(a.line); a.line.geometry.dispose(); a.line.material.dispose(); arcs.splice(i, 1); }
+  }
+  controls.update();
+  renderer.render(scene, camera);
+}
+renderer.setAnimationLoop(frame);
+addEventListener('resize', () => {
+  camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight);
+});
+
+/* ------------------------------------------------------------------ start */
+const DEMO_AGENTS = [
+  ['King', 'crown', 'orb'], ['Librarian', 'books', 'book'], ['Tutor', 'bulb', 'card'], ['Reviewer', 'lens', 'lens'],
+  ['Writer', 'pen', 'pen'], ['Critic', 'check', 'clipboard'], ['Scout', 'radar', null], ['Fixer', 'wrench', null],
+].map(([name, symbol_key, item_key]) => ({ name, symbol_key, item_key, role: '', model: 'claude-haiku-5-5', active: true }));
+
+(async () => {
+  if (new URLSearchParams(location.search).has('demo')) {   // sample crew, no login, no data
+    buildCrew(DEMO_AGENTS);
+    applyState('Writer', 'working'); applyState('Fixer', 'waiting_on_me'); applyState('Critic', 'failed');
+    drawBoard(DEMO_AGENTS.map((a) => ({ name: a.name, state: robots.get(a.name).userData.state })), 2);
+    arcBetween('Librarian', 'Writer');
+    return;
+  }
+  try {
+    const cfg = await loadConfig();
+    db = window.supabase.createClient(cfg.url, cfg.key);
+    const { data } = await db.auth.getSession();
+    if (!data.session) { $('msg').hidden = false; $('msg').innerHTML = 'Sign in first in the <a href="index.html" style="color:#a5b4fc">app</a>, then come back.'; return; }
+    const agents = await db.from('agents').select('name, role, symbol_key, item_key, model, active').eq('active', true);
+    if (agents.error) throw agents.error;
+    buildCrew(agents.data);
+    await load();
+    $('refresh').onclick = () => load().catch(console.error);
+  } catch (e) {
+    console.error(e); $('msg').hidden = false; $('msg').textContent = 'Could not load Brain HQ: ' + (e.message || e);
+  }
+})();
+</script>
+</body>
+</html>
