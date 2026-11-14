@@ -297,8 +297,7 @@ const G = {
   stalk: new THREE.CylinderGeometry(0.018, 0.018, 0.24, 8),
   tip: new THREE.SphereGeometry(0.05, 12, 10),
   chest: new THREE.PlaneGeometry(0.3, 0.3),
-  dash: new THREE.BoxGeometry(0.11, 0.035, 0.05),
-  ringBase: new THREE.TorusGeometry(0.5, 0.012, 6, 48),
+  ringBase: new THREE.TorusGeometry(0.53, 0.026, 10, 96),
   pad: new THREE.CircleGeometry(0.8, 40),
   desk: new THREE.BoxGeometry(1.2, 0.08, 0.6),
   leg: new THREE.BoxGeometry(0.06, 0.5, 0.06),
@@ -309,10 +308,24 @@ const G = {
   orb: new THREE.SphereGeometry(0.075, 14, 10),
   burst: new THREE.RingGeometry(0.86, 1, 48),
 };
+// Holographic glass: see-through in the middle, glowing at the edges (fresnel).
+function holoGlass(tint, base, rim) {
+  return new THREE.ShaderMaterial({
+    uniforms: { uTint: { value: new THREE.Color(tint) }, uBase: { value: base }, uRim: { value: rim } },
+    vertexShader: `varying vec3 vN; varying vec3 vV;
+      void main(){ vec4 mv = modelViewMatrix * vec4(position, 1.0); vN = normalize(normalMatrix * normal); vV = normalize(-mv.xyz); gl_Position = projectionMatrix * mv; }`,
+    fragmentShader: `uniform vec3 uTint; uniform float uBase, uRim; varying vec3 vN; varying vec3 vV;
+      void main(){ float f = pow(1.0 - abs(dot(normalize(vN), normalize(vV))), 2.4);
+        gl_FragColor = vec4(uTint * (0.35 + f * 1.6), uBase + f * uRim);
+        #include <colorspace_fragment>
+      }`,
+    transparent: true, depthWrite: false, side: THREE.DoubleSide,
+  });
+}
 const M = {
-  body: new THREE.MeshStandardMaterial({ color: 0xd9dce8, metalness: 0.35, roughness: 0.35 }),
-  head: new THREE.MeshStandardMaterial({ color: 0xeef0f7, metalness: 0.3, roughness: 0.3 }),
-  dark: new THREE.MeshStandardMaterial({ color: 0x2a2f40, metalness: 0.5, roughness: 0.5 }),
+  body: holoGlass(0x7cc4ff, 0.08, 0.7),
+  head: holoGlass(0x9ad4ff, 0.12, 0.75),
+  dark: holoGlass(0x7cc4ff, 0.3, 0.6),
   desk: new THREE.MeshStandardMaterial({ color: 0x252b40, roughness: 0.7 }),
   gold: new THREE.MeshStandardMaterial({ color: 0xf5c542, metalness: 0.8, roughness: 0.3, emissive: 0x4a3500 }),
   spark: new THREE.MeshBasicMaterial({ color: new THREE.Color(0xbfe3ff).multiplyScalar(1.8) }),
@@ -321,43 +334,71 @@ const M = {
 const BLUE = new THREE.Color(0x60a5fa);
 
 const SYMBOL = { crown: '👑', books: '📚', bulb: '💡', lens: '🔍', pen: '🖊️', check: '✅', radar: '📡', wrench: '🔧' };
+// Chest emblems: glowing line drawings, one per symbol_key (seen through the glass body).
 const symbolTex = {};
 function symbolTexture(key) {
   if (symbolTex[key]) return symbolTex[key];
   const c = document.createElement('canvas'); c.width = c.height = 128;
   const g = c.getContext('2d');
-  g.fillStyle = '#1b2030'; g.beginPath(); g.arc(64, 64, 60, 0, Math.PI * 2); g.fill();
-  g.font = '76px "Apple Color Emoji","Segoe UI Emoji","Noto Color Emoji",sans-serif';
-  g.textAlign = 'center'; g.textBaseline = 'middle'; g.fillText(SYMBOL[key] || '●', 64, 70);
+  g.strokeStyle = '#ffffff'; g.fillStyle = '#ffffff'; g.lineWidth = 7; g.lineCap = 'round'; g.lineJoin = 'round';
+  g.shadowColor = '#8fdcff'; g.shadowBlur = 14;
+  const line = (...p) => { g.beginPath(); g.moveTo(p[0], p[1]); for (let i = 2; i < p.length; i += 2) g.lineTo(p[i], p[i + 1]); g.stroke(); };
+  const circle = (x, y, r, fill) => { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); fill ? g.fill() : g.stroke(); };
+  switch (key) {
+    case 'crown': line(26, 92, 26, 44, 46, 66, 64, 32, 82, 66, 102, 44, 102, 92, 26, 92); break;
+    case 'books': g.strokeRect(26, 34, 18, 62); g.strokeRect(52, 28, 18, 68); line(80, 40, 96, 36, 108, 92, 92, 96, 80, 40); break;
+    case 'bulb': circle(64, 52, 26); line(54, 80, 74, 80); line(56, 92, 72, 92); line(60, 104, 68, 104); break;
+    case 'lens': circle(56, 56, 26); line(75, 75, 102, 102); break;
+    case 'pen': line(86, 30, 98, 42, 50, 90, 32, 96, 38, 78, 86, 30); line(76, 40, 88, 52); break;
+    case 'check': g.lineWidth = 10; line(28, 66, 54, 92, 102, 36); break;
+    case 'radar': circle(64, 64, 42); circle(64, 64, 22); circle(64, 64, 5, true); line(64, 64, 94, 34); break;
+    case 'wrench': g.lineWidth = 11; line(38, 94, 76, 56); g.lineWidth = 8; g.beginPath(); g.arc(86, 44, 18, Math.PI * 0.95, Math.PI * 2.45); g.stroke(); break;
+    default: circle(64, 64, 30);
+  }
   const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace;
   return (symbolTex[key] = t);
 }
 
-// Equipment items, one small mesh group per item_key.
+// Equipment items: the same shapes, now glowing and see-through.
+const holoMats = {};
+function holo(hex) {
+  return holoMats[hex] || (holoMats[hex] = new THREE.MeshBasicMaterial({
+    color: new THREE.Color(hex).multiplyScalar(1.3), transparent: true, opacity: 0.7, depthWrite: false, blending: THREE.AdditiveBlending,
+  }));
+}
 function makeItem(key) {
   const g = new THREE.Group();
-  const glow = new THREE.MeshStandardMaterial({ color: 0x9db4ff, emissive: 0x3050ff, emissiveIntensity: 0.8 });
-  if (key === 'orb') g.add(new THREE.Mesh(new THREE.SphereGeometry(0.12, 20, 14), glow));
-  else if (key === 'book') { const b = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 0.07), new THREE.MeshStandardMaterial({ color: 0x8b3a3a })); g.add(b); }
-  else if (key === 'card') { const b = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.15, 0.015), new THREE.MeshStandardMaterial({ color: 0xfff3c4 })); g.add(b); }
+  if (key === 'orb') g.add(new THREE.Mesh(new THREE.SphereGeometry(0.12, 20, 14), holo(0x9db4ff)));
+  else if (key === 'book') { const b = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 0.07), holo(0xff8a8a)); g.add(b); }
+  else if (key === 'card') { const b = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.15, 0.015), holo(0xfff3c4)); g.add(b); }
   else if (key === 'lens') {
-    const r = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.018, 8, 24), M.dark); g.add(r);
-    const h = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.16, 8), M.dark); h.position.set(0.09, -0.12, 0); h.rotation.z = 0.7; g.add(h);
+    const r = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.018, 8, 24), holo(0xa5f3fc)); g.add(r);
+    const h = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.16, 8), holo(0xa5f3fc)); h.position.set(0.09, -0.12, 0); h.rotation.z = 0.7; g.add(h);
   } else if (key === 'pen') {
-    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.26, 8), new THREE.MeshStandardMaterial({ color: 0x3b82f6 })); p.rotation.z = 0.4; g.add(p);
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.26, 8), holo(0x60a5fa)); p.rotation.z = 0.4; g.add(p);
   } else if (key === 'clipboard') {
-    g.add(new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.3, 0.02), new THREE.MeshStandardMaterial({ color: 0x9a6b3f })));
-    const clip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.04, 0.03), M.dark); clip.position.y = 0.15; g.add(clip);
+    g.add(new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.3, 0.02), holo(0xf0b37e)));
+    const clip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.04, 0.03), holo(0xffffff)); clip.position.y = 0.15; g.add(clip);
   } else return null;
   return g;
 }
+
+// Smooth waist ring: one straight band. A soft light travels around it so you can see it spin.
+const ringTex = (() => {
+  const c = document.createElement('canvas'); c.width = 256; c.height = 4; const g = c.getContext('2d');
+  const gr = g.createLinearGradient(0, 0, 256, 0);
+  gr.addColorStop(0, 'rgb(150,150,150)'); gr.addColorStop(0.42, 'rgb(150,150,150)'); gr.addColorStop(0.5, 'rgb(255,255,255)');
+  gr.addColorStop(0.58, 'rgb(150,150,150)'); gr.addColorStop(1, 'rgb(150,150,150)');
+  g.fillStyle = gr; g.fillRect(0, 0, 256, 4);
+  const t = new THREE.CanvasTexture(c); t.colorSpace = THREE.SRGBColorSpace; return t;
+})();
 
 function makeRobot(agent) {
   const root = new THREE.Group();        // stays on the floor
   const bob = new THREE.Group();         // hovers
   root.add(bob);
   const visorMat = new THREE.MeshBasicMaterial({ color: BLUE.clone() });
-  const ringMat = new THREE.MeshBasicMaterial({ color: BLUE.clone() });
+  const ringMat = new THREE.MeshBasicMaterial({ color: BLUE.clone(), map: ringTex });
   const tipMat = new THREE.MeshBasicMaterial({ color: 0xff6b6b });
   const padMat = new THREE.MeshBasicMaterial({ color: BLUE.clone(), transparent: true, opacity: 0.12, depthWrite: false });
 
@@ -366,21 +407,19 @@ function makeRobot(agent) {
   const visor = new THREE.Mesh(G.visor, visorMat); visor.position.y = 1.38; bob.add(visor);
   const stalk = new THREE.Mesh(G.stalk, M.dark); stalk.position.y = 1.78; bob.add(stalk);
   const tip = new THREE.Mesh(G.tip, tipMat); tip.position.y = 1.92; bob.add(tip);
-  const chest = new THREE.Mesh(G.chest, new THREE.MeshBasicMaterial({ map: symbolTexture(agent.symbol_key), transparent: true }));
-  chest.position.set(0, 0.72, 0.425); chest.rotation.x = -0.27; bob.add(chest);
+  // Glowing emblem floating just inside the glass chest.
+  const chest = new THREE.Mesh(G.chest, new THREE.MeshBasicMaterial({
+    map: symbolTexture(agent.symbol_key), color: new THREE.Color(0x9be7ff).multiplyScalar(1.5),
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+  }));
+  chest.position.set(0, 0.72, 0.3); chest.rotation.x = -0.2; chest.scale.setScalar(1.45); bob.add(chest);
 
   const ring = new THREE.Group(); ring.position.y = 0.34;
   const ringBase = new THREE.Mesh(G.ringBase, ringMat); ringBase.rotation.x = Math.PI / 2; ring.add(ringBase);
-  for (let i = 0; i < 14; i++) {
-    const d = new THREE.Mesh(G.dash, ringMat);
-    const a = (i / 14) * Math.PI * 2;
-    d.position.set(Math.cos(a) * 0.53, 0, Math.sin(a) * 0.53); d.rotation.y = -a + Math.PI / 2;
-    ring.add(d);
-  }
   bob.add(ring);
 
   const item = makeItem(agent.item_key);
-  if (item) { item.position.set(0.62, 0.62, 0.12); bob.add(item); }
+  if (item) { item.position.set(0.62, 0.62, 0.12); item.userData.baseY = 0.62; bob.add(item); }
 
   const pad = new THREE.Mesh(G.pad, padMat); pad.rotation.x = -Math.PI / 2; pad.position.y = 0.01; root.add(pad);
 
@@ -1181,7 +1220,13 @@ function animateRobots(dt, now) {
     else { u.padMat.color.copy(C.blue); u.padMat.opacity = s === 'working' ? 0.2 : 0.08; }
     // as before: antenna blink and item sway
     u.tipMat.color.setHex(Math.sin(t * 3 + u.phase) > 0.6 ? 0xff6b6b : 0x5a1f1f);
-    if (u.item) u.item.rotation.y = Math.sin(t + u.phase) * 0.4;
+    // equipment floats beside the robot: sway, gentle bob and tilt (livelier while working)
+    if (u.item) {
+      const k = s === 'working' ? 2 : 1;
+      u.item.rotation.y = Math.sin(t * k + u.phase) * 0.4;
+      u.item.rotation.z = Math.sin(t * 0.9 * k + u.phase * 2) * 0.12;
+      u.item.position.y = u.item.userData.baseY + Math.sin(t * 1.7 * k + u.phase) * 0.05;
+    }
   });
 }
 function animateCore(dt, busy, calm) {

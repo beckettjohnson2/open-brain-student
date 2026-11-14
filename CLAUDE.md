@@ -175,8 +175,11 @@ built and what's next.
   `supabase_realtime`); no polling, no AI calls. Its buttons call crew
   `{action: "web", op: approve|cancel|go_on|stop|fixer_approve|fixer_reject}`
   with the owner's login token (checked against `OWNER_USER_ID`); that path
-  runs `orderButton` / `fixerDecision`, nothing else. Robot shape is fixed:
-  never change `makeRobot`. Rollback tag: `hq-classic-v1`. `hq.html?demo`
+  runs `orderButton` / `fixerDecision`, nothing else. Robot silhouette is
+  fixed (bell body, head, visor, antenna, crown). The owner's chosen look
+  (Nov 13): translucent holographic glass, glowing line emblems inside the
+  chest, glowing see-through equipment that floats a little, one smooth
+  waist ring (no dashes). Rollback tag: `hq-classic-v1`. `hq.html?demo`
   renders a sample crew without login (`&open=board|agent|core|replay`).
 - **Chunking:** at most `CHUNKS_PER_CALL` (3) chunks per call, each saved with
   its progress in `chunk_progress` (next_index/total, last_error, stalls).
