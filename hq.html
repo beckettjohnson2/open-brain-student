@@ -337,6 +337,24 @@ const M = {
 };
 const BLUE = new THREE.Color(0x60a5fa);
 
+// Chess-piece heads: every robot keeps the same bell body and the same lower half of the head;
+// only the top changes by role. King and pawns keep the round head.
+function chessHead(top) {
+  const pts = [];
+  for (let i = 0; i <= 12; i++) { const a = -Math.PI / 2 + (i / 12) * (Math.PI / 2); pts.push(new THREE.Vector2(0.3 * Math.cos(a), 0.3 * Math.sin(a))); }
+  top.forEach(([r, y]) => pts.push(new THREE.Vector2(r, y)));
+  return new THREE.LatheGeometry(pts, 48);
+}
+const HEADS = {
+  // rook: straight sides and a flat top with a softly rounded edge (no notches)
+  rook: chessHead([[0.3, 0.12], [0.312, 0.19], [0.315, 0.23], [0.305, 0.255], [0.27, 0.265], [0, 0.265]]),
+  // bishop: a smooth, softly pointed mitre (no slit)
+  bishop: chessHead(Array.from({ length: 14 }, (_, i) => { const t = (i + 1) / 14; return [Math.max(0, 0.3 * Math.pow(1 - Math.pow(t, 2.2), 1.1)), 0.42 * t]; })),
+  // queen: the round head, a little taller
+  queen: chessHead(Array.from({ length: 12 }, (_, i) => { const a = ((i + 1) / 12) * (Math.PI / 2); return [0.3 * Math.cos(a), 0.36 * Math.sin(a)]; })),
+};
+const HEAD_OF = { Writer: 'queen', Librarian: 'bishop', Tutor: 'bishop', Critic: 'rook', Reviewer: 'rook' };
+
 const SYMBOL = { crown: '👑', books: '📚', bulb: '💡', lens: '🔍', pen: '🖊️', check: '✅', radar: '📡', wrench: '🔧' };
 // Chest emblems: glowing line drawings, one per symbol_key (seen through the glass body).
 const symbolTex = {};
@@ -407,7 +425,7 @@ function makeRobot(agent) {
   const padMat = new THREE.MeshBasicMaterial({ color: BLUE.clone(), transparent: true, opacity: 0.12, depthWrite: false });
 
   bob.add(new THREE.Mesh(G.body, M.body));
-  const head = new THREE.Mesh(G.head, M.head); head.position.y = 1.38; bob.add(head);
+  const head = new THREE.Mesh(HEADS[HEAD_OF[agent.name]] || G.head, M.head); head.position.y = 1.38; bob.add(head);
   const visor = new THREE.Mesh(G.visor, visorMat); visor.position.y = 1.38; bob.add(visor);
   const metal = agent.name === 'King' ? M.gold : M.silver;
   const stalk = new THREE.Mesh(G.stalk, metal); stalk.position.y = 1.78; bob.add(stalk);

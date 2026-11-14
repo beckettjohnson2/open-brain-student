@@ -176,7 +176,10 @@ built and what's next.
   `{action: "web", op: approve|cancel|go_on|stop|fixer_approve|fixer_reject}`
   with the owner's login token (checked against `OWNER_USER_ID`); that path
   runs `orderButton` / `fixerDecision`, nothing else. Robot silhouette is
-  fixed (bell body, head, visor, antenna, crown). The owner's chosen look
+  fixed: the same bell body for all; only the head top marks a chess role
+  (`HEAD_OF`: Critic/Reviewer rook = flat top, Librarian/Tutor bishop = soft
+  point, Writer queen = taller round; King and pawns round). Full chess-piece
+  bodies were tried and rejected as uneven. The owner's chosen look
   (Nov 13): translucent blue holographic glass with solid metal trim
   (antenna, neck collar, base band) in silver on the agents and gold on the
   King; worker floor pads always soft blue, the King's always gold (no red
