@@ -1221,11 +1221,10 @@ function animateRobots(dt, now) {
     // working: tiny sparks orbiting
     u.sparks.visible = s === 'working';
     if (u.sparks.visible) { u.sparks.rotation.y += dt * 3.2; u.sparks.children.forEach((c, i) => { c.position.y = (i - 1) * 0.28 + Math.sin(t * 4 + i) * 0.08; }); }
-    // floor pad
-    if (now < u.flickerUntil) { u.padMat.color.copy(C.red); u.padMat.opacity = Math.random() < 0.5 ? 0.55 : 0.08; }
-    else if (amber) { u.padMat.color.copy(C.amber); u.padMat.opacity = 0.12 + 0.24 * (0.5 + 0.5 * Math.sin(t * 3)); }
-    else if (s === 'failed') { u.padMat.color.copy(C.red); u.padMat.opacity = 0.14; }
-    else { u.padMat.color.copy(C.blue); u.padMat.opacity = s === 'working' ? 0.2 : 0.08; }
+    // floor pad: always the soft blue (owner's choice: no red or gold bases); the state shows on the robot
+    u.padMat.color.copy(C.blue); u.padMat.opacity = s === 'working' ? 0.2 : 0.08;
+    // failed: a brief flicker of the red visor instead of the floor
+    if (now < u.flickerUntil) u.visorMat.color.copy(C.red).multiplyScalar(Math.random() < 0.5 ? 1.6 : 0.1);
     // as before: antenna blink and item sway
     u.tipMat.color.setHex(Math.sin(t * 3 + u.phase) > 0.6 ? 0xff6b6b : 0x5a1f1f);
     // equipment floats beside the robot: sway, gentle bob and tilt (livelier while working)
