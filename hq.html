@@ -1223,6 +1223,10 @@ function animateRobots(dt, now) {
     if (u.sparks.visible) { u.sparks.rotation.y += dt * 3.2; u.sparks.children.forEach((c, i) => { c.position.y = (i - 1) * 0.28 + Math.sin(t * 4 + i) * 0.08; }); }
     // floor pad: always the soft blue (owner's choice: no red or gold bases); the state shows on the robot
     u.padMat.color.copy(C.blue); u.padMat.opacity = s === 'working' ? 0.2 : 0.08;
+    if (u.agent.name === 'King') {   // the King always stands on a gold base (it pulses while something waits on you)
+      u.padMat.color.copy(C.amber);
+      u.padMat.opacity = amber ? 0.14 + 0.22 * (0.5 + 0.5 * Math.sin(t * 3)) : 0.3;
+    }
     // failed: a brief flicker of the red visor instead of the floor
     if (now < u.flickerUntil) u.visorMat.color.copy(C.red).multiplyScalar(Math.random() < 0.5 ? 1.6 : 0.1);
     // as before: antenna blink and item sway

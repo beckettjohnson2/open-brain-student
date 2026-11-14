@@ -179,8 +179,8 @@ built and what's next.
   fixed (bell body, head, visor, antenna, crown). The owner's chosen look
   (Nov 13): translucent blue holographic glass with solid metal trim
   (antenna, neck collar, base band) in silver on the agents and gold on the
-  King; floor pads always soft blue (no red / gold bases; the state shows on
-  the visor and ring), glowing line emblems inside the
+  King; worker floor pads always soft blue, the King's always gold (no red
+  bases; the state shows on the visor and ring), glowing line emblems inside the
   chest, glowing see-through equipment that floats a little, one smooth
   waist ring (no dashes). Rollback tag: `hq-classic-v1`. `hq.html?demo`
   renders a sample crew without login (`&open=board|agent|core|replay`).
