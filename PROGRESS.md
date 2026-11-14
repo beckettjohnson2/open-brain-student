@@ -16,9 +16,7 @@ _Last updated: November 12, 2026 (late night)_
 > - **Agent panels and replay:** tap a robot for its panel; **Replay today** plays back the day's activity.
 > - **Quality:** Low/Medium/High (Low on phones). Rendering pauses when the tab is hidden.
 >
-> **Look (Nov 13, your choice):** blue see-through glass robots shaped like
-> sleek chess pieces (King = king, Writer = queen, Librarian and Tutor =
-> bishops, Critic and Reviewer = rooks, Scout and Fixer = pawns), with glowing
+> **Look (Nov 13, your choice):** blue see-through glass robots with glowing
 > line emblems inside, floating see-through equipment and one smooth waist
 > ring. The solid metal parts (antenna, neck collar, base band) are silver on
 > the agents and gold on the King, like his crown.

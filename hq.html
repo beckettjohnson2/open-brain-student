@@ -286,7 +286,7 @@ platform.position.set(0, 0.2, -5); scene.add(platform);
 const platformRim = new THREE.Mesh(new THREE.TorusGeometry(1.52, 0.025, 8, 64), new THREE.MeshBasicMaterial({ color: 0x6366f1 }));
 platformRim.rotation.x = Math.PI / 2; platformRim.position.set(0, 0.41, -5); scene.add(platformRim);
 
-/* ------------------------------------------------------------------ robots (chess-piece bodies and heads) */
+/* ------------------------------------------------------------------ robots (unchanged shape) */
 // Shared geometries and materials (built once, reused by every robot).
 const G = {
   body: new THREE.LatheGeometry([
@@ -336,39 +336,6 @@ const M = {
   hit: new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, colorWrite: false }),
 };
 const BLUE = new THREE.Color(0x60a5fa);
-
-// Sleek chess pieces (no crenels, slits or points). Every profile keeps the same key
-// sizes as before (wide base, ~0.38 at the chest, ~0.3 under the head, head ~0.3 wide at
-// the visor), so the visor, ring, emblem, collar, base band and items still fit.
-// Bodies: [radius, height] from the floor up. Heads: relative to the head centre.
-const lathe = (pts, seg = 48) => new THREE.LatheGeometry(pts.map(([x, y]) => new THREE.Vector2(x, y)), seg);
-const PIECES = {
-  king: {
-    body: lathe([[0, 0], [0.6, 0], [0.6, 0.08], [0.52, 0.14], [0.47, 0.24], [0.42, 0.5], [0.39, 0.75], [0.33, 0.95], [0.29, 1.0], [0.38, 1.04], [0.36, 1.09], [0, 1.1]]),
-    head: G.head,                                                     // round head under the crown
-  },
-  queen: {
-    body: lathe([[0, 0], [0.58, 0], [0.58, 0.07], [0.5, 0.13], [0.46, 0.22], [0.4, 0.45], [0.37, 0.72], [0.3, 0.94], [0.26, 1.0], [0.36, 1.04], [0.38, 1.08], [0, 1.1]]),
-    head: lathe([[0, -0.32], [0.2, -0.31], [0.27, -0.22], [0.3, -0.08], [0.3, 0.06], [0.27, 0.17], [0.2, 0.25], [0.1, 0.29], [0, 0.3]]),   // soft flared cup
-  },
-  bishop: {
-    body: lathe([[0, 0], [0.57, 0], [0.57, 0.07], [0.49, 0.13], [0.45, 0.22], [0.4, 0.45], [0.37, 0.72], [0.31, 0.92], [0.27, 1.0], [0.33, 1.04], [0.31, 1.09], [0, 1.1]]),
-    head: lathe([[0, -0.3], [0.18, -0.29], [0.27, -0.18], [0.3, -0.02], [0.28, 0.13], [0.22, 0.27], [0.13, 0.37], [0.05, 0.43], [0, 0.44]]),  // smooth mitre, no slit
-  },
-  rook: {
-    body: lathe([[0, 0], [0.58, 0], [0.58, 0.08], [0.48, 0.14], [0.44, 0.24], [0.41, 0.5], [0.39, 0.8], [0.37, 0.98], [0.32, 1.03], [0.3, 1.1], [0, 1.1]]),
-    head: lathe([[0, -0.3], [0.26, -0.3], [0.29, -0.2], [0.3, 0.1], [0.34, 0.19], [0.34, 0.27], [0, 0.27]]),   // plain turret, no crenels
-  },
-  pawn: {
-    body: lathe([[0, 0], [0.58, 0], [0.58, 0.07], [0.5, 0.13], [0.47, 0.2], [0.42, 0.42], [0.38, 0.7], [0.32, 0.92], [0.27, 1.02], [0.34, 1.05], [0.3, 1.1], [0, 1.1]]),
-    head: G.head,                                                     // the classic ball
-  },
-};
-// Matched by feel: a real chess set (1 king, 1 queen, 2 bishops, 2 rooks, 2 pawns).
-const PIECE_OF = {
-  King: 'king', Writer: 'queen', Librarian: 'bishop', Tutor: 'bishop',
-  Critic: 'rook', Reviewer: 'rook', Scout: 'pawn', Fixer: 'pawn',
-};
 
 const SYMBOL = { crown: '👑', books: '📚', bulb: '💡', lens: '🔍', pen: '🖊️', check: '✅', radar: '📡', wrench: '🔧' };
 // Chest emblems: glowing line drawings, one per symbol_key (seen through the glass body).
@@ -439,9 +406,8 @@ function makeRobot(agent) {
   const tipMat = new THREE.MeshBasicMaterial({ color: 0xff6b6b });
   const padMat = new THREE.MeshBasicMaterial({ color: BLUE.clone(), transparent: true, opacity: 0.12, depthWrite: false });
 
-  const piece = PIECES[PIECE_OF[agent.name] || 'pawn'];
-  bob.add(new THREE.Mesh(piece.body, M.body));
-  const head = new THREE.Mesh(piece.head, M.head); head.position.y = 1.38; bob.add(head);
+  bob.add(new THREE.Mesh(G.body, M.body));
+  const head = new THREE.Mesh(G.head, M.head); head.position.y = 1.38; bob.add(head);
   const visor = new THREE.Mesh(G.visor, visorMat); visor.position.y = 1.38; bob.add(visor);
   const metal = agent.name === 'King' ? M.gold : M.silver;
   const stalk = new THREE.Mesh(G.stalk, metal); stalk.position.y = 1.78; bob.add(stalk);
