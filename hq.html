@@ -19,7 +19,7 @@
 <style>
   :root {
     --bg: #0b0d14; --text: #e8eaf2; --muted: #9aa0b4; --line: #2a2f40; --accent: #6366f1;
-    --holo: rgba(125, 211, 252, 0.38); --holo-bg: rgba(9, 15, 30, 0.84); --cyan: #7dd3fc;
+    --holo: rgba(226, 232, 240, 0.32); --holo-bg: rgba(14, 14, 18, 0.86); --cyan: #f5c542;
     --amber: #fbbf24; --red: #f87171; --green: #4ade80; --blue: #60a5fa;
   }
   * { box-sizing: border-box; }
@@ -31,9 +31,9 @@
     border: 1px solid var(--line); border-radius: 999px; padding: 7px 13px; min-height: 36px; cursor: pointer;
     text-decoration: none; display: inline-flex; align-items: center; gap: 6px; }
   button:disabled { opacity: 0.5; cursor: wait; }
-  button:focus-visible, a:focus-visible, select:focus-visible { outline: 2px solid var(--cyan); outline-offset: 2px; }
-  button.ok { border-color: var(--green); color: #bbf7d0; }
-  button.no { border-color: var(--red); color: #fecaca; }
+  button:focus-visible, a:focus-visible, select:focus-visible { outline: 2px solid #f5c542; outline-offset: 2px; }
+  button.ok { border-color: #f5c542; color: #fde68a; }
+  button.no { border-color: #9ca3af; color: #e5e7eb; }
   button.go { border-color: var(--amber); color: #fde68a; }
 
   /* top bar */
@@ -43,13 +43,13 @@
   .bar h1 { font-size: 1rem; margin: 0 auto 0 0; font-weight: 700; text-shadow: 0 1px 6px #000; white-space: nowrap; }
   .live { font-size: 0.75rem; color: var(--muted); margin-left: 8px; font-weight: 500; }
   .live::before { content: "●"; margin-right: 4px; color: #6b7280; }
-  .live.on::before { color: var(--green); }
+  .live.on::before { color: #f5c542; }
   @media (max-width: 460px) { .bar h1 .name { display: none; } .bar .hide-sm { display: none; } }
 
   /* the "needs you" pill */
   .pill { position: fixed; z-index: 10; top: calc(56px + env(safe-area-inset-top, 0px)); left: 12px;
-    border-color: rgba(96, 165, 250, 0.6); color: #dbeafe; background: rgba(30, 58, 138, 0.45);
-    box-shadow: 0 0 14px rgba(96, 165, 250, 0.25); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+    border-color: rgba(226, 232, 240, 0.55); color: #f1f5f9; background: rgba(40, 40, 48, 0.55);
+    box-shadow: 0 0 14px rgba(226, 232, 240, 0.18); backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
   .pill.need { border-color: var(--amber); color: #fef3c7; background: rgba(120, 72, 0, 0.5);
     box-shadow: 0 0 16px rgba(251, 191, 36, 0.35); animation: needpulse 2.4s ease-in-out infinite; }
   @keyframes needpulse { 50% { box-shadow: 0 0 26px rgba(251, 191, 36, 0.55); } }
@@ -58,9 +58,9 @@
   /* holographic sheets */
   .sheet { position: fixed; z-index: 20; background: var(--holo-bg); border: 1px solid var(--holo);
     border-radius: 14px; padding: 14px 14px 16px; overflow-y: auto; overscroll-behavior: contain;
-    box-shadow: 0 0 0 1px rgba(56, 189, 248, 0.08), 0 0 30px rgba(56, 189, 248, 0.14), inset 0 0 40px rgba(56, 189, 248, 0.05);
+    box-shadow: 0 0 0 1px rgba(245, 197, 66, 0.08), 0 0 30px rgba(245, 197, 66, 0.14), inset 0 0 40px rgba(245, 197, 66, 0.05);
     backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px);
-    background-image: repeating-linear-gradient(0deg, rgba(125, 211, 252, 0.035) 0 1px, transparent 1px 4px);
+    background-image: repeating-linear-gradient(0deg, rgba(226, 232, 240, 0.035) 0 1px, transparent 1px 4px);
     animation: holo-in 0.22s ease-out; }
   @keyframes holo-in { from { opacity: 0; transform: translateY(8px) scale(0.985); } }
   #boardSheet { left: 12px; top: calc(100px + env(safe-area-inset-top, 0px)); width: 370px; max-height: calc(100% - 190px); }
@@ -81,31 +81,31 @@
   .sub { color: var(--muted); font-size: 0.84rem; margin: 4px 0 0; }
   .row { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
   ul.list { list-style: none; margin: 0; padding: 0; }
-  ul.list li { padding: 7px 0; border-top: 1px solid rgba(125, 211, 252, 0.1); font-size: 0.86rem; }
+  ul.list li { padding: 7px 0; border-top: 1px solid rgba(226, 232, 240, 0.1); font-size: 0.86rem; }
   ul.list li:first-child { border-top: 0; }
   .meta { color: var(--muted); font-size: 0.76rem; }
   .preview { color: #c8cde0; font-size: 0.8rem; white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 3px; }
   .empty { color: var(--muted); font-size: 0.84rem; }
   .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 6px; vertical-align: 1px; background: #6b7280; }
-  .s-working { background: var(--blue); box-shadow: 0 0 8px var(--blue); }
-  .s-thinking { background: #a78bfa; box-shadow: 0 0 8px #a78bfa; }
+  .s-working { background: #f1f5f9; box-shadow: 0 0 8px #f1f5f9; }
+  .s-thinking { background: #f5c542; box-shadow: 0 0 8px #f5c542; }
   .s-waiting { background: var(--amber); box-shadow: 0 0 8px var(--amber); }
-  .s-failed { background: var(--red); }
-  .s-queued { background: #93c5fd; }
+  .s-failed { background: #4b5563; box-shadow: inset 0 0 0 2px #9ca3af; }
+  .s-queued { background: #cbd5e1; }
   .chip { font-size: 0.74rem; border: 1px solid var(--line); border-radius: 999px; padding: 2px 9px; color: var(--muted); white-space: nowrap; }
   .card { border: 1px solid rgba(251, 191, 36, 0.45); background: rgba(120, 72, 0, 0.18); border-radius: 10px; padding: 9px 10px; margin-top: 8px; }
-  .card.plain { border-color: rgba(125, 211, 252, 0.2); background: rgba(56, 189, 248, 0.05); }
+  .card.plain { border-color: rgba(226, 232, 240, 0.2); background: rgba(245, 197, 66, 0.05); }
   .prog { height: 6px; border-radius: 6px; background: rgba(255, 255, 255, 0.08); margin-top: 6px; overflow: hidden; }
-  .prog > div { height: 100%; background: var(--blue); border-radius: 6px; transition: width 0.4s; }
+  .prog > div { height: 100%; background: #f5c542; border-radius: 6px; transition: width 0.4s; }
   .stats { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
-  .stat { border: 1px solid rgba(125, 211, 252, 0.18); border-radius: 10px; padding: 8px 10px; }
+  .stat { border: 1px solid rgba(226, 232, 240, 0.18); border-radius: 10px; padding: 8px 10px; }
   .stat b { display: block; font-size: 1.25rem; font-weight: 650; }
   .stat span { color: var(--muted); font-size: 0.74rem; }
   .spark { grid-column: 1 / -1; }
   .spark svg { display: block; width: 100%; height: 34px; margin-top: 4px; }
   .spark rect { fill: var(--cyan); opacity: 0.8; }
   .spark rect.hit { fill: transparent; opacity: 1; }
-  .spark rect.on { opacity: 1; fill: #e0f2fe; }
+  .spark rect.on { opacity: 1; fill: #fff7d6; }
   .topics { display: flex; flex-direction: column; gap: 5px; }
   .topic { display: grid; grid-template-columns: 110px 1fr 28px; align-items: center; gap: 8px; font-size: 0.8rem; }
   .topic .t { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -233,8 +233,8 @@ renderer.setSize(innerWidth, innerHeight);
 document.body.prepend(renderer.domElement);
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0b0d14);
-scene.fog = new THREE.Fog(0x0b0d14, 16, 30);
+scene.background = new THREE.Color(0x0c0d11);
+scene.fog = new THREE.Fog(0x0c0d11, 16, 30);
 
 const camera = new THREE.PerspectiveCamera(45, innerWidth / innerHeight, 0.1, 100);
 const HOME_TARGET = new THREE.Vector3(0, 1.5, -2.2);
@@ -247,8 +247,8 @@ controls.enableDamping = true;
 controls.maxPolarAngle = Math.PI * 0.47;
 controls.minDistance = 2.5; controls.maxDistance = 20;
 
-const HEMI_BASE = new THREE.Color(0x8090ff), AMBER_LIGHT = new THREE.Color(0xffb347);
-const hemi = new THREE.HemisphereLight(0x8090ff, 0x101018, 0.9); scene.add(hemi);
+const HEMI_BASE = new THREE.Color(0xc9ccd6), AMBER_LIGHT = new THREE.Color(0xffb347);
+const hemi = new THREE.HemisphereLight(0xc9ccd6, 0x101012, 0.9); scene.add(hemi);
 const key = new THREE.DirectionalLight(0xffffff, 1.1); key.position.set(5, 9, 6); scene.add(key);
 
 // Floor: the same grid as before, drawn in a shader so a ripple can run across it.
@@ -261,29 +261,29 @@ const floorMat = new THREE.ShaderMaterial({
       vec2 g = abs(fract(vXZ - 0.5) - 0.5) / fwidth(vXZ);
       float line = 1.0 - min(min(g.x, g.y), 1.0);
       // linear colours (same look as the old lit floor + GridHelper)
-      vec3 col = vec3(0.0052, 0.0065, 0.0116) + line * vec3(0.012, 0.017, 0.042);
+      vec3 col = vec3(0.0056, 0.006, 0.0078) + line * vec3(0.022, 0.022, 0.026);
       float age = uTime - uRipT;
       if (age > 0.0 && age < 3.2) {
         float d = abs(length(vXZ - uRipO) - age * 5.5);
         float rip = exp(-d * d * 3.0) * (1.0 - age / 3.2);
-        col += rip * (0.01 + line * 0.35) * vec3(0.2, 0.5, 1.0);
+        col += rip * (0.01 + line * 0.35) * vec3(1.0, 0.82, 0.45);
       }
       col = mix(col, col * vec3(2.2, 1.3, 0.45), uTint * 0.5);
       float fogF = smoothstep(16.0, 30.0, length(vXZ - cameraPosition.xz));
-      gl_FragColor = vec4(mix(col, vec3(0.0033, 0.004, 0.0070), fogF), 1.0);
+      gl_FragColor = vec4(mix(col, vec3(0.0037, 0.004, 0.0052), fogF), 1.0);
       #include <colorspace_fragment>
     }`,
 });
 const floor = new THREE.Mesh(new THREE.PlaneGeometry(22, 18), floorMat);
 floor.rotation.x = -Math.PI / 2; scene.add(floor);
-const wallMat = new THREE.MeshStandardMaterial({ color: 0x141826, roughness: 1 });
+const wallMat = new THREE.MeshStandardMaterial({ color: 0x15161b, roughness: 1 });
 const back = new THREE.Mesh(new THREE.PlaneGeometry(22, 9), wallMat); back.position.set(0, 4.5, -8); scene.add(back);
 const side = new THREE.Mesh(new THREE.PlaneGeometry(18, 9), wallMat); side.position.set(-11, 4.5, 1); side.rotation.y = Math.PI / 2; scene.add(side);
 
 // King's platform at the front.
-const platform = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.6, 0.4, 40), new THREE.MeshStandardMaterial({ color: 0x1e2336, metalness: 0.3, roughness: 0.6 }));
+const platform = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.6, 0.4, 40), new THREE.MeshStandardMaterial({ color: 0x1f1d18, metalness: 0.5, roughness: 0.5 }));
 platform.position.set(0, 0.2, -5); scene.add(platform);
-const platformRim = new THREE.Mesh(new THREE.TorusGeometry(1.52, 0.025, 8, 64), new THREE.MeshBasicMaterial({ color: 0x6366f1 }));
+const platformRim = new THREE.Mesh(new THREE.TorusGeometry(1.52, 0.025, 8, 64), new THREE.MeshBasicMaterial({ color: new THREE.Color(0xf5c542).multiplyScalar(1.2) }));
 platformRim.rotation.x = Math.PI / 2; platformRim.position.set(0, 0.41, -5); scene.add(platformRim);
 
 /* ------------------------------------------------------------------ robots (unchanged shape) */
@@ -323,15 +323,18 @@ function holoGlass(tint, base, rim) {
   });
 }
 const M = {
-  body: holoGlass(0x7cc4ff, 0.08, 0.7),
-  head: holoGlass(0x9ad4ff, 0.12, 0.75),
-  dark: holoGlass(0x7cc4ff, 0.3, 0.6),
-  desk: new THREE.MeshStandardMaterial({ color: 0x252b40, roughness: 0.7 }),
+  body: holoGlass(0xd6dbe4, 0.08, 0.7),
+  head: holoGlass(0xe8ecf2, 0.12, 0.75),
+  dark: holoGlass(0xd6dbe4, 0.3, 0.6),
+  bodyGold: holoGlass(0xf5c542, 0.1, 0.75),
+  headGold: holoGlass(0xffd970, 0.14, 0.8),
+  desk: new THREE.MeshStandardMaterial({ color: 0x24242a, roughness: 0.7 }),
   gold: new THREE.MeshStandardMaterial({ color: 0xf5c542, metalness: 0.8, roughness: 0.3, emissive: 0x4a3500 }),
-  spark: new THREE.MeshBasicMaterial({ color: new THREE.Color(0xbfe3ff).multiplyScalar(1.8) }),
+  spark: new THREE.MeshBasicMaterial({ color: new THREE.Color(0xf1f5f9).multiplyScalar(1.8) }),
   hit: new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false, colorWrite: false }),
 };
-const BLUE = new THREE.Color(0x60a5fa);
+const BLUE = new THREE.Color(0xe2e8f0);   // agents' base colour (silver); the King's is GOLD
+const GOLD = new THREE.Color(0xf5c542);
 
 const SYMBOL = { crown: '👑', books: '📚', bulb: '💡', lens: '🔍', pen: '🖊️', check: '✅', radar: '📡', wrench: '🔧' };
 // Chest emblems: glowing line drawings, one per symbol_key (seen through the glass body).
@@ -341,7 +344,7 @@ function symbolTexture(key) {
   const c = document.createElement('canvas'); c.width = c.height = 128;
   const g = c.getContext('2d');
   g.strokeStyle = '#ffffff'; g.fillStyle = '#ffffff'; g.lineWidth = 7; g.lineCap = 'round'; g.lineJoin = 'round';
-  g.shadowColor = '#8fdcff'; g.shadowBlur = 14;
+  g.shadowColor = '#ffffff'; g.shadowBlur = 14;
   const line = (...p) => { g.beginPath(); g.moveTo(p[0], p[1]); for (let i = 2; i < p.length; i += 2) g.lineTo(p[i], p[i + 1]); g.stroke(); };
   const circle = (x, y, r, fill) => { g.beginPath(); g.arc(x, y, r, 0, Math.PI * 2); fill ? g.fill() : g.stroke(); };
   switch (key) {
@@ -368,16 +371,16 @@ function holo(hex) {
 }
 function makeItem(key) {
   const g = new THREE.Group();
-  if (key === 'orb') g.add(new THREE.Mesh(new THREE.SphereGeometry(0.12, 20, 14), holo(0x9db4ff)));
-  else if (key === 'book') { const b = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 0.07), holo(0xff8a8a)); g.add(b); }
-  else if (key === 'card') { const b = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.15, 0.015), holo(0xfff3c4)); g.add(b); }
+  if (key === 'orb') g.add(new THREE.Mesh(new THREE.SphereGeometry(0.12, 20, 14), holo(0xffd970)));
+  else if (key === 'book') { const b = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.28, 0.07), holo(0xe5e7eb)); g.add(b); }
+  else if (key === 'card') { const b = new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.15, 0.015), holo(0xf8fafc)); g.add(b); }
   else if (key === 'lens') {
-    const r = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.018, 8, 24), holo(0xa5f3fc)); g.add(r);
-    const h = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.16, 8), holo(0xa5f3fc)); h.position.set(0.09, -0.12, 0); h.rotation.z = 0.7; g.add(h);
+    const r = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.018, 8, 24), holo(0xe5e7eb)); g.add(r);
+    const h = new THREE.Mesh(new THREE.CylinderGeometry(0.018, 0.018, 0.16, 8), holo(0xe5e7eb)); h.position.set(0.09, -0.12, 0); h.rotation.z = 0.7; g.add(h);
   } else if (key === 'pen') {
-    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.26, 8), holo(0x60a5fa)); p.rotation.z = 0.4; g.add(p);
+    const p = new THREE.Mesh(new THREE.CylinderGeometry(0.02, 0.02, 0.26, 8), holo(0xf1f5f9)); p.rotation.z = 0.4; g.add(p);
   } else if (key === 'clipboard') {
-    g.add(new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.3, 0.02), holo(0xf0b37e)));
+    g.add(new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.3, 0.02), holo(0xd1d5db)));
     const clip = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.04, 0.03), holo(0xffffff)); clip.position.y = 0.15; g.add(clip);
   } else return null;
   return g;
@@ -399,17 +402,18 @@ function makeRobot(agent) {
   root.add(bob);
   const visorMat = new THREE.MeshBasicMaterial({ color: BLUE.clone() });
   const ringMat = new THREE.MeshBasicMaterial({ color: BLUE.clone(), map: ringTex });
-  const tipMat = new THREE.MeshBasicMaterial({ color: 0xff6b6b });
+  const tipMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
   const padMat = new THREE.MeshBasicMaterial({ color: BLUE.clone(), transparent: true, opacity: 0.12, depthWrite: false });
 
-  bob.add(new THREE.Mesh(G.body, M.body));
-  const head = new THREE.Mesh(G.head, M.head); head.position.y = 1.38; bob.add(head);
+  const king = agent.name === 'King';   // the King is gold, every other agent silver
+  bob.add(new THREE.Mesh(G.body, king ? M.bodyGold : M.body));
+  const head = new THREE.Mesh(G.head, king ? M.headGold : M.head); head.position.y = 1.38; bob.add(head);
   const visor = new THREE.Mesh(G.visor, visorMat); visor.position.y = 1.38; bob.add(visor);
   const stalk = new THREE.Mesh(G.stalk, M.dark); stalk.position.y = 1.78; bob.add(stalk);
   const tip = new THREE.Mesh(G.tip, tipMat); tip.position.y = 1.92; bob.add(tip);
   // Glowing emblem floating just inside the glass chest.
   const chest = new THREE.Mesh(G.chest, new THREE.MeshBasicMaterial({
-    map: symbolTexture(agent.symbol_key), color: new THREE.Color(0x9be7ff).multiplyScalar(1.5),
+    map: symbolTexture(agent.symbol_key), color: new THREE.Color(king ? 0xf5c542 : 0xf1f5f9).multiplyScalar(1.5),
     transparent: true, depthWrite: false, blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
   }));
   chest.position.set(0, 0.72, 0.3); chest.rotation.x = -0.2; chest.scale.setScalar(1.45); bob.add(chest);
@@ -449,6 +453,7 @@ function decorate(root) {
   }
   u.bob.add(u.sparks);
   const hit = new THREE.Mesh(G.hit, M.hit); hit.position.y = 1.1; hit.userData.agentName = u.agent.name; root.add(hit);
+  u.base = (u.agent.name === 'King' ? GOLD : BLUE).clone();
   u.hit = hit; u.state = 'idle'; u.flickerUntil = 0; u.wiggleAt = -1e9;
 }
 
@@ -494,18 +499,18 @@ function drawBoard3d(states, need, ordersToday) {
   const keyNow = JSON.stringify([states, need, ordersToday]);
   if (keyNow === boardKey) return; boardKey = keyNow;
   const g = boardCanvas.getContext('2d');
-  g.fillStyle = '#0d1424'; g.fillRect(0, 0, 1024, 576);
-  g.strokeStyle = need ? '#b7791f' : '#3b4a7a'; g.lineWidth = 6; g.strokeRect(3, 3, 1018, 570);
-  g.fillStyle = '#a5b4fc'; g.font = 'bold 40px sans-serif'; g.fillText('BRAIN HQ · STATUS', 32, 58);
+  g.fillStyle = '#121216'; g.fillRect(0, 0, 1024, 576);
+  g.strokeStyle = need ? '#b7791f' : '#4a4a55'; g.lineWidth = 6; g.strokeRect(3, 3, 1018, 570);
+  g.fillStyle = '#f5c542'; g.font = 'bold 40px sans-serif'; g.fillText('BRAIN HQ · STATUS', 32, 58);
   g.font = '30px sans-serif';
   Object.entries(states).forEach(([name, s], i) => {
     const y = 110 + i * 46;
-    g.fillStyle = { working: '#60a5fa', thinking: '#a78bfa', waiting: '#fbbf24', failed: '#f87171', queued: '#93c5fd' }[s] || '#6b7280';
+    g.fillStyle = { working: '#f8fafc', thinking: '#f5c542', waiting: '#fbbf24', failed: '#4b5563', queued: '#cbd5e1' }[s] || '#6b7280';
     g.beginPath(); g.arc(44, y - 10, 10, 0, Math.PI * 2); g.fill();
     g.fillStyle = '#e8eaf2'; g.fillText(name, 66, y);
     g.fillStyle = '#9aa0b4'; g.fillText(STATE_WORD[s] || s, 290, y);
   });
-  g.fillStyle = need ? '#fbbf24' : '#93c5fd'; g.font = 'bold 44px sans-serif';
+  g.fillStyle = need ? '#fbbf24' : '#e2e8f0'; g.font = 'bold 44px sans-serif';
   g.fillText(need ? `${need} need${need === 1 ? 's' : ''} you` : 'Nothing needs you', 560, 130);
   g.fillStyle = '#9aa0b4'; g.font = '30px sans-serif'; g.fillText(`Orders today: ${ordersToday}`, 560, 186);
   g.fillText('Tap for details', 560, 530);
@@ -520,16 +525,16 @@ const glowTex = (() => {
   gr.addColorStop(0, 'rgba(255,255,255,1)'); gr.addColorStop(0.35, 'rgba(255,255,255,0.35)'); gr.addColorStop(1, 'rgba(255,255,255,0)');
   g.fillStyle = gr; g.fillRect(0, 0, 64, 64); return new THREE.CanvasTexture(c);
 })();
-const CORE_COLOR = new THREE.Color(0x7dd3fc), CORE_INNER = new THREE.Color(0xa78bfa);
+const CORE_COLOR = new THREE.Color(0xaab2bf), CORE_INNER = new THREE.Color(0xd4a72c);
 const core = new THREE.Group(); core.position.copy(CORE_POS); scene.add(core);
 const coreSpin = new THREE.Group(); core.add(coreSpin);
 const coreWireMat = new THREE.MeshBasicMaterial({ color: CORE_COLOR.clone(), wireframe: true, transparent: true, opacity: 0.9 });
 const coreWire = new THREE.Mesh(new THREE.IcosahedronGeometry(1, 1), coreWireMat); coreSpin.add(coreWire);
 const coreInnerMat = new THREE.MeshBasicMaterial({ color: CORE_INNER.clone(), wireframe: true, transparent: true, opacity: 0.7 });
 const coreInner = new THREE.Mesh(new THREE.IcosahedronGeometry(0.6, 0), coreInnerMat); core.add(coreInner);
-const coreGlowMat = new THREE.SpriteMaterial({ map: glowTex, color: 0x60a5fa, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
+const coreGlowMat = new THREE.SpriteMaterial({ map: glowTex, color: 0x6b5a2e, transparent: true, depthWrite: false, blending: THREE.AdditiveBlending });
 const coreGlow = new THREE.Sprite(coreGlowMat); coreGlow.scale.setScalar(2.4); core.add(coreGlow);
-const coreHaloMat = new THREE.MeshBasicMaterial({ color: 0x7dd3fc, transparent: true, opacity: 0.35 });
+const coreHaloMat = new THREE.MeshBasicMaterial({ color: 0xf5c542, transparent: true, opacity: 0.35 });
 const coreHalo = new THREE.Mesh(new THREE.TorusGeometry(1.35, 0.02, 6, 64), coreHaloMat); coreHalo.rotation.x = 1.2; core.add(coreHalo);
 const coreHit = new THREE.Mesh(new THREE.SphereGeometry(2.2, 10, 8), M.hit); core.add(coreHit); hitTargets.push(coreHit);
 const CORE = { base: 0.3, phase: 0, period: 4.2, pulse: 0, spin: 0, bright: 0.8 };
@@ -537,11 +542,11 @@ function coreSize(total) { return 0.3 * (0.8 + 0.5 * Math.min(1, total / 600)); 
 function corePulse(k) { CORE.pulse = Math.max(CORE.pulse, k); CORE.spin += k * 4; }
 
 /* ------------------------------------------------------------------ signals: orbs, bursts, arcs */
-const ORB_BLUE = new THREE.Color(0x93c5fd).multiplyScalar(1.6);
-const ORB_GREEN = new THREE.Color(0x86efac).multiplyScalar(1.6);
-const ORB_RED = new THREE.Color(0xfca5a5).multiplyScalar(1.4);
+const ORB_BLUE = new THREE.Color(0xf1f5f9).multiplyScalar(1.6);   // silver
+const ORB_GREEN = new THREE.Color(0xffe8a3).multiplyScalar(1.7);  // into the core: pale gold
+const ORB_RED = new THREE.Color(0x6b7280).multiplyScalar(1.2);    // failed: dim gray
 const ORB_GOLD = new THREE.Color(0xfde68a).multiplyScalar(1.6);
-const ORB_SPARK = new THREE.Color(0xa5f3fc).multiplyScalar(1.8);
+const ORB_SPARK = new THREE.Color(0xffffff).multiplyScalar(1.8);
 const MAX_TRAIL = 8;
 const orbs = Array.from({ length: 18 }, () => {
   const parts = [];
@@ -584,14 +589,14 @@ function animateOrbs(now) {
 }
 
 const bursts = Array.from({ length: 10 }, () => {
-  const m = new THREE.Mesh(G.burst, new THREE.MeshBasicMaterial({ color: new THREE.Color(0xc7e6ff).multiplyScalar(1.8), transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
+  const m = new THREE.Mesh(G.burst, new THREE.MeshBasicMaterial({ color: new THREE.Color(0xffffff).multiplyScalar(1.8), transparent: true, depthWrite: false, side: THREE.DoubleSide, blending: THREE.AdditiveBlending }));
   m.visible = false; scene.add(m); return { m, start: 0 };
 });
 function burst(name, color) {
   const p = anchor(name); if (!p) return;
   const b = bursts.find((x) => !x.m.visible) || bursts[0];
   b.m.position.copy(p); b.start = performance.now(); b.m.visible = true;
-  b.m.material.color.copy(color || new THREE.Color(0xc7e6ff).multiplyScalar(1.8));
+  b.m.material.color.copy(color || new THREE.Color(0xffffff).multiplyScalar(1.8));
 }
 function animateBursts(now) {
   for (const b of bursts) {
@@ -605,7 +610,7 @@ function animateBursts(now) {
 
 // Hand-off arcs between consecutive steps of an order (kept from before).
 const arcs = [];
-function arcBetween(a, b, color = 0x8b9cff) {
+function arcBetween(a, b, color = 0xd4d4d8) {
   const p0 = anchor(a), p2 = anchor(b);
   if (!p0 || !p2 || a === b) return;
   const p1 = p0.clone().lerp(p2, 0.5); p1.y += 1.6 + p0.distanceTo(p2) * 0.15;
@@ -640,7 +645,7 @@ for (let i = 0; i < PMAX; i++) {
   pVel[i * 3] = (Math.random() - 0.5) * 0.08; pVel[i * 3 + 1] = Math.random() * 0.06 + 0.02; pVel[i * 3 + 2] = (Math.random() - 0.5) * 0.08;
 }
 const pGeo = new THREE.BufferGeometry(); pGeo.setAttribute('position', new THREE.BufferAttribute(pPos, 3));
-const particles = new THREE.Points(pGeo, new THREE.PointsMaterial({ size: 0.05, map: glowTex, color: 0x9ec5ff, transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending }));
+const particles = new THREE.Points(pGeo, new THREE.PointsMaterial({ size: 0.05, map: glowTex, color: 0xe5e7eb, transparent: true, opacity: 0.55, depthWrite: false, blending: THREE.AdditiveBlending }));
 scene.add(particles);
 function animateParticles(dt, calm) {
   const n = Q.particles, k = dt * (calm ? 0.3 : 1);
@@ -891,14 +896,14 @@ function needCard(n) {
       h('div', null, '👑 Plan waiting for your OK'),
       h('div', { class: 'preview' }, short(n.order.request, 200)),
       h('div', { class: 'meta' }, `${steps.length} steps: ${steps.map((s) => s.agent).join(' → ')} · about ${usd(n.order.estimated_cost)}`),
-      h('div', { class: 'row' }, b('✅ Approve', 'ok', 'approve', { order_id: n.order.id }), b('✖️ Reject', 'no', 'cancel', { order_id: n.order.id }),
+      h('div', { class: 'row' }, b('✓ Approve', 'ok', 'approve', { order_id: n.order.id }), b('✕ Reject', 'no', 'cancel', { order_id: n.order.id }),
         n.order.plan_text ? h('button', { type: 'button', onclick: () => openText('Plan', n.order.plan_text) }, 'Read plan') : null));
   }
   if (n.kind === 'fixer') {
     return h('div', { class: 'card' },
       h('div', null, '🔧 Fixer wants to change these'),
       h('div', { class: 'preview' }, short(n.run.output || n.run.task, 260)),
-      h('div', { class: 'row' }, b('✅ Approve', 'ok', 'fixer_approve', { run_id: n.run.id }), b('✖️ Reject', 'no', 'fixer_reject', { run_id: n.run.id }),
+      h('div', { class: 'row' }, b('✓ Approve', 'ok', 'fixer_approve', { run_id: n.run.id }), b('✕ Reject', 'no', 'fixer_reject', { run_id: n.run.id }),
         n.run.output ? h('button', { type: 'button', onclick: () => openText('Fixer change list', n.run.output) }, 'Read all') : null));
   }
   return h('div', { class: 'card' },
@@ -935,7 +940,7 @@ const runLine = (r) => h('li', null,
     `${r.agent || ''}${r.agent ? ' · ' : ''}${short(r.task || r.job || '', 90)}`),
   h('div', { class: 'meta' }, `${r.status.replace(/_/g, ' ')} · ${clockOf(ts(r.finished_at || r.updated_at || r.created_at))}` +
     (Number(r.cost) ? ` · ${usd(r.cost)}` : '')),
-  r.error ? h('div', { class: 'preview', style: 'color:#fecaca' }, short(r.error, 160)) : null);
+  r.error ? h('div', { class: 'preview', style: 'color:#d1d5db' }, short(r.error, 160)) : null);
 
 /* ---- status board (overlay) ---- */
 function sparkline() {
@@ -1038,7 +1043,7 @@ function renderAgent() {
   const lastOut = focusRuns.find((r) => r.output);
   const controls = [];
   if (curOrder && ['planning', 'awaiting_approval'].includes(curOrder.status)) {
-    controls.push(h('button', { class: 'no', type: 'button', onclick: (e) => act('cancel', { order_id: curOrder.id }, e.currentTarget) }, '✖️ Cancel this order'));
+    controls.push(h('button', { class: 'no', type: 'button', onclick: (e) => act('cancel', { order_id: curOrder.id }, e.currentTarget) }, '✕ Cancel this order'));
   } else if (curOrder && curOrder.status === 'waiting_on_me' && !mine.some((n) => n.kind === 'cap')) {
     controls.push(h('button', { class: 'no', type: 'button', onclick: (e) => act('stop', { order_id: curOrder.id }, e.currentTarget) }, '■ Stop this order'));
   }
@@ -1058,7 +1063,7 @@ function renderAgent() {
       h('div', null, h('span', { class: 'dot s-' + (r.status === 'done' ? 'idle' : r.status === 'waiting_on_me' ? 'waiting' : r.status) }), short(r.task || r.job || '', 90)),
       h('div', { class: 'meta' }, `${r.status.replace(/_/g, ' ')} · ${new Date(ts(r.created_at)).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })} · ${Number(r.tokens || 0).toLocaleString()} tokens · ${usd(r.cost)}`),
       r.output ? h('div', { class: 'preview' }, short(r.output, 160)) : null,
-      r.error ? h('div', { class: 'preview', style: 'color:#fecaca' }, short(r.error, 160)) : null,
+      r.error ? h('div', { class: 'preview', style: 'color:#d1d5db' }, short(r.error, 160)) : null,
       r.output ? h('button', { class: 'x', type: 'button', style: 'margin-top:4px', onclick: () => openText(`${name}: output`, r.output) }, 'Open') : null)))
       : h('div', { class: 'empty' }, 'Loading…'),
   );
@@ -1181,7 +1186,7 @@ function setQuality(name) {
 
 /* ------------------------------------------------------------------ the frame loop */
 let clockT = 0, lastFrame = performance.now(), stateTimer = 0, tintCur = 0;
-const C = { blue: new THREE.Color(0x60a5fa), amber: new THREE.Color(0xfbbf24), red: new THREE.Color(0xf87171) };
+const C = { amber: new THREE.Color(0xfbbf24), dead: new THREE.Color(0x6b7280) };
 const VISOR_K = { idle: 0.62, queued: 0.8, thinking: 0.16, working: 1.9, waiting: 1.35, failed: 1.25 };
 const RING_SPEED = { idle: 0.5, queued: 0.8, thinking: 1.2, working: 5, waiting: 1, failed: 0.3 };
 const tmpC = new THREE.Color();
@@ -1190,7 +1195,7 @@ function animateRobots(dt, now) {
   robots.forEach((r) => {
     const u = r.userData, s = u.state || 'idle', t = clockT;
     const amber = s === 'waiting' || (s === 'thinking' && u.amber);
-    const col = amber ? C.amber : s === 'failed' ? C.red : C.blue;
+    const col = amber ? C.amber : s === 'failed' ? C.dead : u.base;
     u.visorMat.color.copy(col).multiplyScalar(VISOR_K[s]);
     u.ringMat.color.copy(col).multiplyScalar(s === 'working' ? 1.7 : amber ? 1.2 : 0.9);
     u.ring.rotation.y += dt * RING_SPEED[s];
@@ -1208,18 +1213,21 @@ function animateRobots(dt, now) {
     if (u.scanner.visible) {
       const a = Math.sin(t * 3) * 0.95;
       u.scanner.position.set(Math.sin(a) * 0.3, 1.38, Math.cos(a) * 0.3);
-      u.scanMat.color.copy(amber ? C.amber : C.blue).multiplyScalar(2.2);
+      u.scanMat.color.copy(amber ? C.amber : u.base).multiplyScalar(2.2);
     }
     // working: tiny sparks orbiting
     u.sparks.visible = s === 'working';
     if (u.sparks.visible) { u.sparks.rotation.y += dt * 3.2; u.sparks.children.forEach((c, i) => { c.position.y = (i - 1) * 0.28 + Math.sin(t * 4 + i) * 0.08; }); }
     // floor pad
-    if (now < u.flickerUntil) { u.padMat.color.copy(C.red); u.padMat.opacity = Math.random() < 0.5 ? 0.55 : 0.08; }
+    if (now < u.flickerUntil) {   // failed: a brief flicker (pad and visor), no red
+      const on = Math.random() < 0.5; u.padMat.color.copy(u.base); u.padMat.opacity = on ? 0.5 : 0.04;
+      u.visorMat.color.copy(u.base).multiplyScalar(on ? 1.4 : 0.05);
+    }
     else if (amber) { u.padMat.color.copy(C.amber); u.padMat.opacity = 0.12 + 0.24 * (0.5 + 0.5 * Math.sin(t * 3)); }
-    else if (s === 'failed') { u.padMat.color.copy(C.red); u.padMat.opacity = 0.14; }
-    else { u.padMat.color.copy(C.blue); u.padMat.opacity = s === 'working' ? 0.2 : 0.08; }
+    else if (s === 'failed') { u.padMat.color.copy(C.dead); u.padMat.opacity = 0.1; }
+    else { u.padMat.color.copy(u.base); u.padMat.opacity = s === 'working' ? 0.2 : 0.07; }
     // as before: antenna blink and item sway
-    u.tipMat.color.setHex(Math.sin(t * 3 + u.phase) > 0.6 ? 0xff6b6b : 0x5a1f1f);
+    u.tipMat.color.copy(u.base).multiplyScalar(Math.sin(t * 3 + u.phase) > 0.6 ? 1.6 : 0.25);
     // equipment floats beside the robot: sway, gentle bob and tilt (livelier while working)
     if (u.item) {
       const k = s === 'working' ? 2 : 1;

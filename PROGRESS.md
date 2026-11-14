@@ -16,6 +16,11 @@ _Last updated: November 12, 2026 (late night)_
 > - **Agent panels and replay:** tap a robot for its panel; **Replay today** plays back the day's activity.
 > - **Quality:** Low/Medium/High (Low on phones). Rendering pauses when the tab is hidden.
 >
+> **Look (Nov 13, your choice):** glass robots, the King gold and the agents
+> silver, glowing line emblems inside, floating see-through equipment, one
+> smooth waist ring. No red or blue: waiting on you = amber-gold, failed =
+> a dim gray robot with a flickering visor.
+>
 > Costs nothing extra: one load when the page opens, then Supabase Realtime (switched on for `agent_runs`, `orders`, `thoughts`, `llm_usage` by `migrations/2026-11-16-hq-realtime.sql`). No polling and no AI calls.
 
 > **Nov 12 (night, recheck): all passing, not pushed yet.** Rechecked: all 9

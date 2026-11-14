@@ -177,7 +177,9 @@ built and what's next.
   with the owner's login token (checked against `OWNER_USER_ID`); that path
   runs `orderButton` / `fixerDecision`, nothing else. Robot silhouette is
   fixed (bell body, head, visor, antenna, crown). The owner's chosen look
-  (Nov 13): translucent holographic glass, glowing line emblems inside the
+  (Nov 13): translucent holographic glass (King gold, every other agent
+  silver; no red or blue anywhere: waiting = amber-gold, failed = dim gray
+  flicker), glowing line emblems inside the
   chest, glowing see-through equipment that floats a little, one smooth
   waist ring (no dashes). Rollback tag: `hq-classic-v1`. `hq.html?demo`
   renders a sample crew without login (`&open=board|agent|core|replay`).
